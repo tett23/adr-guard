@@ -2,6 +2,7 @@
 //!
 //! - `adr-guard pre-commit`: gitのpre-commit hookとして、ステージされた変更を検査する。
 //! - `adr-guard claude-hook`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
+//! - `adr-guard check-range <base> <head>`: CIで、範囲内の各コミットを検査する。
 
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -14,11 +15,18 @@ const STATUS_PREFIX: &str = "ステータス:";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
 
 fn main() -> ExitCode {
-    match std::env::args().nth(1).as_deref() {
-        Some("pre-commit") => pre_commit(),
-        Some("claude-hook") => claude_hook(),
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["pre-commit"] => pre_commit(),
+        ["claude-hook"] => claude_hook(),
+        ["check-range", base, head] => check_range(base, head),
         _ => {
-            eprintln!("usage: adr-guard <pre-commit|claude-hook>");
+            eprintln!("usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>>");
             ExitCode::from(64)
         }
     }
@@ -45,8 +53,43 @@ fn only_status_changed(before: &[u8], after: &[u8]) -> bool {
 }
 
 fn git(args: &[&str], cwd: &Path) -> Option<Vec<u8>> {
-    let output = Command::new("git").args(args).current_dir(cwd).output().ok()?;
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()?;
     output.status.success().then_some(output.stdout)
+}
+
+/// `git diff --name-status --no-renames -z` の出力から、ADRの規則に違反する変更を列挙する。
+///
+/// * `old_ref` - 変更前の内容を `git show <old_ref>:<path>` で読むための参照（`HEAD` やコミット）
+/// * `new_ref` - 変更後の内容を `git show <new_ref>:<path>` で読むための参照（インデックスなら空文字）
+fn violations(diff: &[u8], old_ref: &str, new_ref: &str, cwd: &Path) -> Vec<String> {
+    let fields: Vec<String> = diff
+        .split(|&b| b == 0)
+        .filter(|f| !f.is_empty())
+        .map(|f| String::from_utf8_lossy(f).into_owned())
+        .collect();
+
+    let mut violations = Vec::new();
+    for pair in fields.chunks(2) {
+        let [status, path] = pair else { continue };
+        match status.as_str() {
+            "A" => {}
+            "M" => {
+                let old = git(&["show", &format!("{old_ref}:{path}")], cwd).unwrap_or_default();
+                let new = git(&["show", &format!("{new_ref}:{path}")], cwd).unwrap_or_default();
+                if !only_status_changed(&old, &new) {
+                    violations.push(format!(
+                        "コミット済みのADRはステータスの行以外を変更できません: {path}"
+                    ));
+                }
+            }
+            _ => violations.push(format!("コミット済みのADRは削除・移動できません: {path}")),
+        }
+    }
+    violations
 }
 
 fn pre_commit() -> ExitCode {
@@ -57,36 +100,82 @@ fn pre_commit() -> ExitCode {
     }
 
     let Some(diff) = git(
-        &["diff", "--cached", "--name-status", "--no-renames", "-z", "HEAD", "--", ADR_DIR],
+        &[
+            "diff",
+            "--cached",
+            "--name-status",
+            "--no-renames",
+            "-z",
+            "HEAD",
+            "--",
+            ADR_DIR,
+        ],
         cwd,
     ) else {
         eprintln!("pre-commit: ステージされた変更を取得できませんでした");
         return ExitCode::FAILURE;
     };
 
-    let fields: Vec<String> = diff
-        .split(|&b| b == 0)
-        .filter(|f| !f.is_empty())
-        .map(|f| String::from_utf8_lossy(f).into_owned())
-        .collect();
+    let violations = violations(&diff, "HEAD", "", cwd);
+    for violation in &violations {
+        eprintln!("pre-commit: {violation}");
+    }
+    if !violations.is_empty() {
+        eprintln!("{ADVICE}");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+/// `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。
+/// `<base>` がコミットとして存在しなければ（ブランチの新規作成など）、ルートコミットから検査する。
+fn check_range(base: &str, head: &str) -> ExitCode {
+    let cwd = Path::new(".");
+    let base_exists = git(
+        &["rev-parse", "--verify", "-q", &format!("{base}^{{commit}}")],
+        cwd,
+    )
+    .is_some();
+    let range = if base_exists {
+        format!("{base}..{head}")
+    } else {
+        head.to_owned()
+    };
+    let Some(commits) = git(&["rev-list", "--no-merges", "--reverse", &range], cwd) else {
+        eprintln!("check-range: コミットの範囲を取得できませんでした: {range}");
+        return ExitCode::FAILURE;
+    };
 
     let mut failed = false;
-    for pair in fields.chunks(2) {
-        let [status, path] = pair else { continue };
-        match status.as_str() {
-            "A" => {}
-            "M" => {
-                let head = git(&["show", &format!("HEAD:{path}")], cwd).unwrap_or_default();
-                let index = git(&["show", &format!(":{path}")], cwd).unwrap_or_default();
-                if !only_status_changed(&head, &index) {
-                    eprintln!("pre-commit: コミット済みのADRはステータスの行以外を変更できません: {path}");
-                    failed = true;
-                }
-            }
-            _ => {
-                eprintln!("pre-commit: コミット済みのADRは削除・移動できません: {path}");
-                failed = true;
-            }
+    for commit in String::from_utf8_lossy(&commits).lines() {
+        let parent = format!("{commit}^");
+        if git(&["rev-parse", "--verify", "-q", &parent], cwd).is_none() {
+            // ルートコミットはすべて新規追加
+            continue;
+        }
+        let Some(diff) = git(
+            &[
+                "diff",
+                "--name-status",
+                "--no-renames",
+                "-z",
+                &parent,
+                commit,
+                "--",
+                ADR_DIR,
+            ],
+            cwd,
+        ) else {
+            eprintln!("check-range: {commit}: 差分を取得できませんでした");
+            failed = true;
+            continue;
+        };
+        for violation in violations(&diff, &parent, commit, cwd) {
+            eprintln!(
+                "check-range: {}: {violation}",
+                &commit[..commit.len().min(12)]
+            );
+            failed = true;
         }
     }
 
@@ -199,7 +288,9 @@ fn claude_hook() -> ExitCode {
     match simulate(tool, input, &current) {
         Some(updated) if only_status_changed(&committed, updated.as_bytes()) => ExitCode::SUCCESS,
         _ => {
-            eprintln!("コミット済みのADRはステータスの行以外を変更できません: {rel_path}\n{ADVICE}");
+            eprintln!(
+                "コミット済みのADRはステータスの行以外を変更できません: {rel_path}\n{ADVICE}"
+            );
             ExitCode::from(2)
         }
     }
