@@ -6,6 +6,8 @@ use tempfile::TempDir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_adr-guard");
 const ADR: &str = "docs/adr/0001-x.md";
+const MODULE_ADR: &str = "docs/server/adr/0001-x.md";
+const CONTENT: &str = "# ADR 0001: x\n\nステータス: 提案\n\n本文\n";
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -34,6 +36,22 @@ fn repo() -> TempDir {
     write(p, ADR, "# ADR 0001: x\n\nステータス: 提案\n\n本文\n");
     git(p, &["add", "."]);
     git(p, &["commit", "-qm", "init"]);
+    dir
+}
+
+/// `repo()` に加えて、モジュールのADRと、ADRではない `docs/` 以下のファイルをコミットした一時リポジトリを作る（ADR 0002）。
+fn module_repo() -> TempDir {
+    let dir = repo();
+    let p = dir.path();
+    for path in [
+        MODULE_ADR,
+        "docs/a/b/adr/0001-x.md",
+        "docs/server/notes/a.md",
+    ] {
+        write(p, path, CONTENT);
+    }
+    git(p, &["add", "."]);
+    git(p, &["commit", "-qm", "module"]);
     dir
 }
 
@@ -123,6 +141,87 @@ mod pre_commit {
     }
 }
 
+mod pre_commit_module {
+    use super::*;
+
+    fn staged(dir: &Path, path: &str, content: &str) -> bool {
+        write(dir, path, content);
+        git(dir, &["add", "-A"]);
+        pre_commit(dir)
+    }
+
+    #[test]
+    fn allows_status_change() {
+        let dir = module_repo();
+        assert!(staged(
+            dir.path(),
+            MODULE_ADR,
+            &CONTENT.replace("提案", "採択")
+        ));
+    }
+
+    #[test]
+    fn rejects_body_change() {
+        let dir = module_repo();
+        assert!(!staged(
+            dir.path(),
+            MODULE_ADR,
+            &CONTENT.replace("本文", "改変")
+        ));
+    }
+
+    #[test]
+    fn rejects_delete_and_rename() {
+        for args in [
+            vec!["rm", "-q", MODULE_ADR],
+            vec!["mv", MODULE_ADR, "docs/server/adr/0002-x.md"],
+        ] {
+            let dir = module_repo();
+            git(dir.path(), &args);
+            assert!(!pre_commit(dir.path()), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn allows_new_adr() {
+        let dir = module_repo();
+        assert!(staged(dir.path(), "docs/client/adr/0001-y.md", "y\n"));
+    }
+
+    #[test]
+    fn rejects_move_from_docs_adr_to_module() {
+        let dir = module_repo();
+        git(dir.path(), &["mv", ADR, "docs/server/adr/0002-x.md"]);
+        assert!(!pre_commit(dir.path()));
+    }
+
+    #[test]
+    fn ignores_non_adr_files_under_docs() {
+        for path in ["docs/a/b/adr/0001-x.md", "docs/server/notes/a.md"] {
+            let dir = module_repo();
+            assert!(staged(dir.path(), path, "改変\n"), "{path}");
+        }
+    }
+
+    #[test]
+    fn reports_violations_in_both_directories() {
+        let dir = module_repo();
+        let p = dir.path();
+        write(p, ADR, "改変\n");
+        write(p, MODULE_ADR, "改変\n");
+        git(p, &["add", "-A"]);
+        let output = Command::new(BIN)
+            .arg("pre-commit")
+            .current_dir(p)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(!output.status.success());
+        assert!(stderr.contains(ADR), "{stderr}");
+        assert!(stderr.contains(MODULE_ADR), "{stderr}");
+    }
+}
+
 mod claude_hook {
     use super::*;
     use serde_json::json;
@@ -177,6 +276,38 @@ mod claude_hook {
         let dir = repo();
         let payload =
             json!({"tool_name": "Write", "tool_input": {"file_path": "README.md", "content": "x"}});
+        assert_eq!(claude_hook(dir.path(), payload), 0);
+    }
+}
+
+mod claude_hook_module {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn allows_status_edit() {
+        let dir = module_repo();
+        let payload = json!({"tool_name": "Edit", "tool_input": {
+            "file_path": MODULE_ADR, "old_string": "ステータス: 提案", "new_string": "ステータス: 採択",
+        }});
+        assert_eq!(claude_hook(dir.path(), payload), 0);
+    }
+
+    #[test]
+    fn rejects_body_edit() {
+        let dir = module_repo();
+        let payload = json!({"tool_name": "Edit", "tool_input": {
+            "file_path": dir.path().join(MODULE_ADR), "old_string": "本文", "new_string": "改変",
+        }});
+        assert_eq!(claude_hook(dir.path(), payload), 2);
+    }
+
+    #[test]
+    fn allows_non_adr_files_under_docs() {
+        let dir = module_repo();
+        let payload = json!({"tool_name": "Write", "tool_input": {
+            "file_path": "docs/a/b/adr/0001-x.md", "content": "x",
+        }});
         assert_eq!(claude_hook(dir.path(), payload), 0);
     }
 }
@@ -272,6 +403,23 @@ mod check_range {
         let head = commit(dir.path(), ADR, &ORIGINAL.replace("本文", "改変"));
         let zero = "0000000000000000000000000000000000000000";
         assert!(!check_range(dir.path(), zero, &head));
+    }
+
+    #[test]
+    fn rejects_module_adr_body_change() {
+        let dir = module_repo();
+        let base = rev(dir.path(), "HEAD");
+        let head = commit(dir.path(), MODULE_ADR, &CONTENT.replace("本文", "改変"));
+        assert!(!check_range(dir.path(), &base, &head));
+    }
+
+    #[test]
+    fn allows_module_adr_status_change_and_non_adr_changes() {
+        let dir = module_repo();
+        let base = rev(dir.path(), "HEAD");
+        commit(dir.path(), MODULE_ADR, &CONTENT.replace("提案", "採択"));
+        let head = commit(dir.path(), "docs/a/b/adr/0001-x.md", "改変\n");
+        assert!(check_range(dir.path(), &base, &head));
     }
 
     #[test]

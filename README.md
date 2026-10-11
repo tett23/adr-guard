@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/tett23/adr-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/tett23/adr-guard/actions/workflows/ci.yml)
 
-コミット済みのADR（`docs/adr/`）を、ステータスの行（`ステータス:` で始まる行）を除いて変更できないようにするツール。
+コミット済みのADR（`docs/adr/`、モノレポでは `docs/<モジュール>/adr/` も）を、ステータスの行（`ステータス:` で始まる行）を除いて変更できないようにするツール。
 
 ADRは決定の記録であり、あとから書きかえると経緯が失われる。
 仕様を変える場合は、元のADRを書きかえずに新しいADRを作成する。
@@ -10,10 +10,12 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 
 ## 規則
 
-- 対象は `docs/adr/` 以下のファイル。
+- 対象は `docs/adr/` と `docs/<モジュール>/adr/`（例：`docs/server/adr/`）以下のファイル。モジュールは1段だけで、`docs/a/b/adr/` は対象外。
+- 設定は不要。モノレポでモジュールごとにADRを分けても、導入の手順は変わらない。
 - コミット済みのADRは、`ステータス:` で始まる行以外を変更できない。
 - コミット済みのADRは、削除・リネームできない。
 - 新しいADRの追加と、未コミットのADRの編集は自由にできる。
+- `docs/adr/` から `docs/<モジュール>/adr/` への移動も、コミット済みのADRの移動として拒否する。移す場合は、新しい場所に新しいADRを作成する。
 
 ## サブコマンド
 
