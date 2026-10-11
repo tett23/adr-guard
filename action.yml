@@ -1,0 +1,44 @@
+# docs/adr/0001
+name: adr-guard
+description: Check that committed ADRs are not modified, except for the status line
+inputs:
+  base:
+    description: 検査する範囲の起点のコミット（このコミット自体は検査しない）。無いコミットを指定するとルートコミットから検査する
+    required: true
+  head:
+    description: 検査する範囲の終点のコミット
+    required: true
+  version:
+    description: 使う adr-guard のリリースのタグ（例：v0.1.0）。省略すると、このactionと同じバージョン
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Check committed ADRs
+      shell: bash
+      env:
+        BASE_SHA: ${{ inputs.base }}
+        HEAD_SHA: ${{ inputs.head }}
+        VERSION: ${{ inputs.version }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        if [ "$RUNNER_OS" != "Linux" ] || [ "$RUNNER_ARCH" != "X64" ]; then
+          echo "::error::adr-guard のactionは Linux (x86_64) のランナーだけに対応しています"
+          exit 1
+        fi
+        if [ -z "$VERSION" ]; then
+          VERSION="v$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ACTION_PATH/Cargo.toml" | head -n 1)"
+        fi
+        archive="adr-guard-$VERSION-x86_64-unknown-linux-gnu.tar.gz"
+        url="https://github.com/tett23/adr-guard/releases/download/$VERSION"
+        dir=$(mktemp -d)
+        (
+          cd "$dir"
+          curl -fsSLO "$url/$archive"
+          curl -fsSLO "$url/SHA256SUMS"
+          grep -F " $archive" SHA256SUMS | sha256sum -c -
+          tar -xzf "$archive"
+        )
+        "$dir/${archive%.tar.gz}/adr-guard" check-range "$BASE_SHA" "$HEAD_SHA"
