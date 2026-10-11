@@ -436,3 +436,62 @@ mod check_range {
         assert!(check_range(p, &base, &head));
     }
 }
+
+mod options {
+    use super::*;
+
+    fn run(args: &[&str]) -> (i32, String, String) {
+        let output = Command::new(BIN).args(args).output().unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stdout).unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    }
+
+    fn version() -> String {
+        format!("adr-guard {}", env!("CARGO_PKG_VERSION"))
+    }
+
+    #[test]
+    fn prints_version() {
+        for flag in ["--version", "-V"] {
+            assert_eq!(run(&[flag]), (0, format!("{}\n", version()), String::new()));
+        }
+    }
+
+    #[test]
+    fn prints_help() {
+        let (code, stdout, stderr) = run(&["--help"]);
+        assert_eq!((code, stderr.as_str()), (0, ""));
+        assert_eq!(stdout.lines().next(), Some(version().as_str()));
+        for word in [
+            "pre-commit",
+            "claude-hook",
+            "check-range <base> <head>",
+            "--version",
+            "-V",
+            "--help",
+            "-h",
+        ] {
+            assert!(stdout.contains(word), "{word}: {stdout}");
+        }
+        assert_eq!(run(&["-h"]), (code, stdout, stderr));
+    }
+
+    #[test]
+    fn rejects_extra_arguments() {
+        for args in [["--version", "x"], ["--help", "x"]] {
+            let (code, stdout, _) = run(&args);
+            assert_eq!((code, stdout.as_str()), (64, ""), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn usage_mentions_options() {
+        let (code, _, stderr) = run(&[]);
+        assert_eq!(code, 64);
+        assert!(stderr.contains("--version"), "{stderr}");
+        assert!(stderr.contains("--help"), "{stderr}");
+    }
+}

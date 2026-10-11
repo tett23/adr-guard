@@ -16,7 +16,12 @@
 
 ### サブコマンド
 
-- 引数が次のいずれでもなければ、使い方を表示して終了コード64で終わる。
+- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version` や `--help` に余分な引数が付いた場合も同じ。
+- `adr-guard --version`、`adr-guard -V`（ADR 0003）
+  - `adr-guard <Cargo.toml の version>` の1行を標準出力に表示し、終了コード0で終わる。
+- `adr-guard --help`、`adr-guard -h`（ADR 0003）
+  - 1行目に `--version` と同じ行、続けて概要と、各サブコマンドとオプションの説明を標準出力に表示し、終了コード0で終わる。
+  - サブコマンドごとのヘルプ（`adr-guard pre-commit --help` など）はない。
 - `adr-guard pre-commit`
   - ステージされたADRの変更のうち、HEADに存在するファイルについて、HEADとインデックスの内容を比較する。
   - 違反があれば、`pre-commit: ` で始まるメッセージを表示して終了コード1で終わる。
@@ -34,6 +39,7 @@
 
 - `v` で始まるタグのpushで、GitHubのリリースを作成する（`.github/workflows/release.yml`）。
   - タグが `v<Cargo.toml の version>` と一致しなければ失敗する。一致すれば `cargo test --locked` を実行してからビルドする。
+  - ビルドしたバイナリの `--version` の出力が `adr-guard <タグからvを除いたもの>` と一致しなければ失敗する（ADR 0003）。
   - ターゲットは `aarch64-apple-darwin` と `x86_64-unknown-linux-gnu`。
   - 成果物はターゲットごとの `adr-guard-<タグ>-<ターゲット>.tar.gz`（中身はバイナリ、`LICENSE`、`README.md`）と `SHA256SUMS`。アーカイブを作ったあと、中身がそろっていることを確かめる。
   - `-` を含むタグはプレリリースとして作成する。

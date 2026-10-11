@@ -24,6 +24,8 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 | `adr-guard pre-commit` | gitのpre-commit hookとして、ステージされた変更を検査する |
 | `adr-guard claude-hook` | Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditによるコミット済みADRの変更を拒否する |
 | `adr-guard check-range <base> <head>` | `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。`<base>` が無いコミットならルートコミットから検査する |
+| `adr-guard --version`、`-V` | バージョンを表示する |
+| `adr-guard --help`、`-h` | ヘルプを表示する |
 
 ## インストール
 
@@ -45,6 +47,7 @@ curl -fsSLO "https://github.com/tett23/adr-guard/releases/download/$tag/SHA256SU
 grep "$archive" SHA256SUMS | shasum -a 256 -c   # Linuxでは sha256sum -c
 tar -xzf "$archive"
 mv "${archive%.tar.gz}/adr-guard" ~/.local/bin/
+adr-guard --version   # adr-guard 0.3.0
 ```
 
 macOS向けのバイナリは、Apple Developer IDによる署名と公証をしていない。
@@ -56,6 +59,8 @@ macOS向けのバイナリは、Apple Developer IDによる署名と公証をし
 ```sh
 cargo install --git https://github.com/tett23/adr-guard --tag v0.2.0
 ```
+
+手元の adr-guard のバージョンは `adr-guard --version` で確かめる。
 
 ## リポジトリへの導入
 

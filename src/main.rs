@@ -3,6 +3,7 @@
 //! - `adr-guard pre-commit`: gitのpre-commit hookとして、ステージされた変更を検査する。
 //! - `adr-guard claude-hook`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
 //! - `adr-guard check-range <base> <head>`: CIで、範囲内の各コミットを検査する。
+//! - `adr-guard --version`、`adr-guard --help`: バージョンとヘルプを表示する（ADR 0003）。
 
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -12,6 +13,21 @@ use serde_json::Value;
 
 const STATUS_PREFIX: &str = "ステータス:";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
+const USAGE: &str =
+    "usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|--version|--help>";
+const HELP: &str = "\
+コミット済みのADR（docs/adr/、docs/<モジュール>/adr/）を、ステータスの行を除いて変更できないようにする。
+
+使い方:
+  adr-guard pre-commit                 gitのpre-commit hookとして、ステージされた変更を検査する
+  adr-guard claude-hook                Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditを検査する
+  adr-guard check-range <base> <head>  CIで、<base>..<head> の各コミットを検査する
+  adr-guard --version, -V              バージョンを表示する
+  adr-guard --help, -h                 このヘルプを表示する";
+
+fn version() -> String {
+    format!("adr-guard {}", env!("CARGO_PKG_VERSION"))
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -24,8 +40,16 @@ fn main() -> ExitCode {
         ["pre-commit"] => pre_commit(),
         ["claude-hook"] => claude_hook(),
         ["check-range", base, head] => check_range(base, head),
+        ["--version" | "-V"] => {
+            println!("{}", version());
+            ExitCode::SUCCESS
+        }
+        ["--help" | "-h"] => {
+            println!("{}\n{HELP}", version());
+            ExitCode::SUCCESS
+        }
         _ => {
-            eprintln!("usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>>");
+            eprintln!("{USAGE}");
             ExitCode::from(64)
         }
     }

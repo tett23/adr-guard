@@ -56,6 +56,17 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: cargo build --release --locked --target "$TARGET"
+      # docs/adr/0003
+      - name: Verify binary version
+        env:
+          TAG: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          actual=$("target/$TARGET/release/adr-guard" --version)
+          if [ "$actual" != "adr-guard ${TAG#v}" ]; then
+            echo "::error::バイナリのバージョン ($actual) がタグ $TAG と一致しません"
+            exit 1
+          fi
       - name: Package
         env:
           TAG: ${{ github.ref_name }}
