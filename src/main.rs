@@ -1,4 +1,4 @@
-//! コミット済みのADR（docs/adr/）を、ステータスの行を除いて変更できないようにするガード。
+//! コミット済みのADR（docs/adr/、docs/<モジュール>/adr/）を、ステータスの行を除いて変更できないようにするガード。
 //!
 //! - `adr-guard pre-commit`: gitのpre-commit hookとして、ステージされた変更を検査する。
 //! - `adr-guard claude-hook`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
@@ -10,7 +10,6 @@ use std::process::{Command, ExitCode};
 
 use serde_json::Value;
 
-const ADR_DIR: &str = "docs/adr/";
 const STATUS_PREFIX: &str = "ステータス:";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
 
@@ -29,6 +28,15 @@ fn main() -> ExitCode {
             eprintln!("usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>>");
             ExitCode::from(64)
         }
+    }
+}
+
+/// リポジトリのルートからの相対パスが、`docs/adr/` か `docs/<モジュール>/adr/` 以下にあるか（ADR 0002）。
+fn is_adr_path(path: &str) -> bool {
+    match path.split('/').collect::<Vec<_>>().as_slice() {
+        ["docs", "adr", _, ..] => true,
+        ["docs", module, "adr", _, ..] => !module.is_empty(),
+        _ => false,
     }
 }
 
@@ -62,6 +70,7 @@ fn git(args: &[&str], cwd: &Path) -> Option<Vec<u8>> {
 }
 
 /// `git diff --name-status --no-renames -z` の出力から、ADRの規則に違反する変更を列挙する。
+/// ADR以外のパスは無視する。
 ///
 /// * `old_ref` - 変更前の内容を `git show <old_ref>:<path>` で読むための参照（`HEAD` やコミット）
 /// * `new_ref` - 変更後の内容を `git show <new_ref>:<path>` で読むための参照（インデックスなら空文字）
@@ -75,6 +84,9 @@ fn violations(diff: &[u8], old_ref: &str, new_ref: &str, cwd: &Path) -> Vec<Stri
     let mut violations = Vec::new();
     for pair in fields.chunks(2) {
         let [status, path] = pair else { continue };
+        if !is_adr_path(path) {
+            continue;
+        }
         match status.as_str() {
             "A" => {}
             "M" => {
@@ -107,8 +119,6 @@ fn pre_commit() -> ExitCode {
             "--no-renames",
             "-z",
             "HEAD",
-            "--",
-            ADR_DIR,
         ],
         cwd,
     ) else {
@@ -161,8 +171,6 @@ fn check_range(base: &str, head: &str) -> ExitCode {
                 "-z",
                 &parent,
                 commit,
-                "--",
-                ADR_DIR,
             ],
             cwd,
         ) else {
@@ -275,7 +283,7 @@ fn claude_hook() -> ExitCode {
         return ExitCode::SUCCESS;
     };
     let rel_path = rel_path.to_string_lossy();
-    if !rel_path.starts_with(ADR_DIR) {
+    if !is_adr_path(&rel_path) {
         return ExitCode::SUCCESS;
     }
 
@@ -300,6 +308,40 @@ fn claude_hook() -> ExitCode {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn adr_paths() {
+        let adr = [
+            "docs/adr/0001-a.md",
+            "docs/adr/adr/a.md",
+            "docs/server/adr/0001-a.md",
+            "docs/server/adr/images/a.png",
+        ];
+        for path in adr {
+            assert!(is_adr_path(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn non_adr_paths() {
+        let non_adr = [
+            "docs/adr",
+            "docs/adr.md",
+            "docs/server/adr",
+            "docs/server/adr.md",
+            "docs/server/adrs/0001-a.md",
+            "docs/server/other/a.md",
+            "docs/a/b/adr/0001-a.md",
+            "docs//adr/0001-a.md",
+            "docs/specifications.md",
+            "src/docs/server/adr/a.md",
+            "packages/server/docs/adr/0001-a.md",
+            "README.md",
+        ];
+        for path in non_adr {
+            assert!(!is_adr_path(path), "{path}");
+        }
+    }
 
     #[test]
     fn status_line_only_change_is_allowed() {
