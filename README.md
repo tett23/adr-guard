@@ -24,8 +24,16 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 | `adr-guard pre-commit` | gitのpre-commit hookとして、ステージされた変更を検査する |
 | `adr-guard claude-hook` | Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditによるコミット済みADRの変更を拒否する |
 | `adr-guard check-range <base> <head>` | `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。`<base>` が無いコミットならルートコミットから検査する |
+| `adr-guard list` | 作業ツリーにあるADR（未コミットのものも含む）のパスを一覧する |
+| `adr-guard proposed [--no-status]` | ステータスが提案のADRを `<パス><タブ><ステータス>` で一覧する。`--no-status` ではパスだけを出力する |
 | `adr-guard --version`、`-V` | バージョンを表示する |
 | `adr-guard --help`、`-h` | ヘルプを表示する |
+
+レビュー待ちのADRを開く例：
+
+```sh
+adr-guard proposed --no-status | xargs "$EDITOR"
+```
 
 ## インストール
 
