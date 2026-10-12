@@ -3,7 +3,7 @@
 //! - `adr-guard pre-commit`: gitのpre-commit hookとして、ステージされた変更を検査する。
 //! - `adr-guard claude-hook`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
 //! - `adr-guard check-range <base> <head>`: CIで、範囲内の各コミットを検査する。
-//! - `adr-guard list`、`adr-guard proposed [--no-status]`: ADRと、ステータスが提案のADRを一覧する（ADR 0005）。
+//! - `adr-guard list`、`adr-guard proposed [--status]`: ADRと、ステータスが提案のADRを一覧する（ADR 0005、0006）。
 //! - `adr-guard --version`、`adr-guard --help`: バージョンとヘルプを表示する（ADR 0003）。
 
 use std::io::{Read, Write};
@@ -15,7 +15,7 @@ use serde_json::Value;
 const STATUS_PREFIX: &str = "ステータス:";
 const PROPOSED: &str = "提案";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
-const USAGE: &str = "usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|list|proposed [--no-status]|--version|--help>";
+const USAGE: &str = "usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|list|proposed [--status]|--version|--help>";
 const HELP: &str = "\
 コミット済みのADR（docs/adr/、docs/<モジュール>/adr/）を、ステータスの行を除いて変更できないようにする。
 
@@ -24,8 +24,8 @@ const HELP: &str = "\
   adr-guard claude-hook                Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditを検査する
   adr-guard check-range <base> <head>  CIで、<base>..<head> の各コミットを検査する
   adr-guard list                       ADRのパスを一覧する
-  adr-guard proposed [--no-status]     ステータスが提案のADRを、パスとステータスで一覧する
-                                       --no-status ではパスだけを出力する
+  adr-guard proposed [--status]        ステータスが提案のADRのパスを一覧する
+                                       --status ではステータスをパスの前に付ける
   adr-guard --version, -V              バージョンを表示する
   adr-guard --help, -h                 このヘルプを表示する";
 
@@ -45,8 +45,8 @@ fn main() -> ExitCode {
         ["claude-hook"] => claude_hook(),
         ["check-range", base, head] => check_range(base, head),
         ["list"] => list(),
-        ["proposed"] => proposed(true),
-        ["proposed", "--no-status"] => proposed(false),
+        ["proposed"] => proposed(false),
+        ["proposed", "--status"] => proposed(true),
         ["--version" | "-V"] => {
             println!("{}", version());
             ExitCode::SUCCESS
@@ -282,7 +282,7 @@ fn proposed(with_status: bool) -> ExitCode {
         let content = String::from_utf8_lossy(&std::fs::read(root.join(&path)).ok()?).into_owned();
         let status = status(&content).filter(|s| s.starts_with(PROPOSED))?;
         Some(if with_status {
-            format!("{path}\t{status}")
+            format!("{status}\t{path}")
         } else {
             path
         })

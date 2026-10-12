@@ -574,26 +574,26 @@ mod listing {
     }
 
     #[test]
-    fn lists_proposed_adrs_with_status() {
-        let dir = listing_repo();
-        let expected = lines(&[
-            "docs/adr/0002-b.md\t提案",
-            "docs/adr/0007-g.md\t提案",
-            "docs/server/adr/0001-a.md\t提案（レビュー中）",
-        ]);
-        assert_eq!(run(dir.path(), &["proposed"]), (0, expected.clone()));
-        assert_eq!(run(&dir.path().join("docs"), &["proposed"]), (0, expected));
-    }
-
-    #[test]
-    fn lists_proposed_adrs_without_status() {
+    fn lists_proposed_adrs() {
         let dir = listing_repo();
         let expected = lines(&[
             "docs/adr/0002-b.md",
             "docs/adr/0007-g.md",
             "docs/server/adr/0001-a.md",
         ]);
-        let args = ["proposed", "--no-status"];
+        assert_eq!(run(dir.path(), &["proposed"]), (0, expected.clone()));
+        assert_eq!(run(&dir.path().join("docs"), &["proposed"]), (0, expected));
+    }
+
+    #[test]
+    fn lists_proposed_adrs_with_status_before_path() {
+        let dir = listing_repo();
+        let expected = lines(&[
+            "提案\tdocs/adr/0002-b.md",
+            "提案\tdocs/adr/0007-g.md",
+            "提案（レビュー中）\tdocs/server/adr/0001-a.md",
+        ]);
+        let args = ["proposed", "--status"];
         assert_eq!(run(dir.path(), &args), (0, expected.clone()));
         assert_eq!(run(&dir.path().join("docs"), &args), (0, expected));
     }
@@ -603,7 +603,7 @@ mod listing {
         let dir = TempDir::new().unwrap();
         git(dir.path(), &["init", "-q"]);
         write(dir.path(), "README.md", "x\n");
-        for args in [&["list"][..], &["proposed"], &["proposed", "--no-status"]] {
+        for args in [&["list"][..], &["proposed"], &["proposed", "--status"]] {
             assert_eq!(run(dir.path(), args), (0, String::new()), "{args:?}");
         }
     }
@@ -611,7 +611,7 @@ mod listing {
     #[test]
     fn fails_outside_repository() {
         let dir = TempDir::new().unwrap();
-        for args in [&["list"][..], &["proposed"], &["proposed", "--no-status"]] {
+        for args in [&["list"][..], &["proposed"], &["proposed", "--status"]] {
             assert_eq!(run(dir.path(), args), (1, String::new()), "{args:?}");
         }
     }
@@ -623,8 +623,11 @@ mod listing {
             &["list", "x"][..],
             &["list", "--no-status"],
             &["proposed", "x"],
-            &["proposed", "--no-status", "x"],
-            &["proposed", "--no-status", "--no-status"],
+            &["proposed", "--no-status"],
+            &["proposed", "--status", "x"],
+            &["proposed", "--status", "--status"],
+            &["list", "--status"],
+            &["--status", "proposed"],
             &["--no-status", "proposed"],
         ] {
             assert_eq!(run(dir.path(), args), (64, String::new()), "{args:?}");
@@ -635,8 +638,9 @@ mod listing {
     fn help_mentions_subcommands() {
         let (code, stdout) = run(Path::new("."), &["--help"]);
         assert_eq!(code, 0);
-        for word in ["list", "proposed", "--no-status"] {
+        for word in ["list", "proposed", "--status"] {
             assert!(stdout.contains(word), "{word}: {stdout}");
         }
+        assert!(!stdout.contains("--no-status"), "{stdout}");
     }
 }
