@@ -1,6 +1,6 @@
 # ADR 0003: `--version` と `--help` オプションを加える
 
-ステータス: 採択→リリースのバージョンはADR 0004
+ステータス: 採択→リリースのバージョンは[ADR 0004](0004-release-version-options-as-patch.md)
 
 ## 文脈
 
