@@ -3,7 +3,7 @@
 //! - `adr-guard pre-commit`: gitのpre-commit hookとして、ステージされた変更を検査する。
 //! - `adr-guard claude-hook`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
 //! - `adr-guard check-range <base> <head>`: CIで、範囲内の各コミットを検査する。
-//! - `adr-guard list`、`adr-guard proposed [--status]`: ADRと、ステータスが提案のADRを一覧する（ADR 0005、0006）。
+//! - `adr-guard list [--status]`、`adr-guard proposed [--status]`: ADRと、ステータスが提案のADRを一覧する（ADR 0005、0006、0007）。
 //! - `adr-guard --version`、`adr-guard --help`: バージョンとヘルプを表示する（ADR 0003）。
 
 use std::io::{Read, Write};
@@ -15,7 +15,7 @@ use serde_json::Value;
 const STATUS_PREFIX: &str = "ステータス:";
 const PROPOSED: &str = "提案";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
-const USAGE: &str = "usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|list|proposed [--status]|--version|--help>";
+const USAGE: &str = "usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|list [--status]|proposed [--status]|--version|--help>";
 const HELP: &str = "\
 コミット済みのADR（docs/adr/、docs/<モジュール>/adr/）を、ステータスの行を除いて変更できないようにする。
 
@@ -23,7 +23,8 @@ const HELP: &str = "\
   adr-guard pre-commit                 gitのpre-commit hookとして、ステージされた変更を検査する
   adr-guard claude-hook                Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditを検査する
   adr-guard check-range <base> <head>  CIで、<base>..<head> の各コミットを検査する
-  adr-guard list                       ADRのパスを一覧する
+  adr-guard list [--status]            ADRのパスを一覧する
+                                       --status ではステータスをパスの前に付ける
   adr-guard proposed [--status]        ステータスが提案のADRのパスを一覧する
                                        --status ではステータスをパスの前に付ける
   adr-guard --version, -V              バージョンを表示する
@@ -44,7 +45,8 @@ fn main() -> ExitCode {
         ["pre-commit"] => pre_commit(),
         ["claude-hook"] => claude_hook(),
         ["check-range", base, head] => check_range(base, head),
-        ["list"] => list(),
+        ["list"] => list(false),
+        ["list", "--status"] => list(true),
         ["proposed"] => proposed(false),
         ["proposed", "--status"] => proposed(true),
         ["--version" | "-V"] => {
@@ -265,28 +267,40 @@ fn print_lines(lines: impl Iterator<Item = String>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn list() -> ExitCode {
-    let Some((_, paths)) = adr_files() else {
-        eprintln!("list: ADRを列挙できませんでした");
-        return ExitCode::FAILURE;
-    };
-    print_lines(paths.into_iter())
-}
-
-fn proposed(with_status: bool) -> ExitCode {
+/// `include` を満たすステータスのADRを出力する。`with_status` なら `<ステータス><タブ><パス>`、
+/// そうでなければパスだけを出力する。ステータスの行が無ければステータスを空にする（ADR 0007）。
+fn print_adrs(
+    command: &str,
+    with_status: bool,
+    include: impl Fn(Option<&str>) -> bool,
+) -> ExitCode {
     let Some((root, paths)) = adr_files() else {
-        eprintln!("proposed: ADRを列挙できませんでした");
+        eprintln!("{command}: ADRを列挙できませんでした");
         return ExitCode::FAILURE;
     };
     print_lines(paths.into_iter().filter_map(|path| {
-        let content = String::from_utf8_lossy(&std::fs::read(root.join(&path)).ok()?).into_owned();
-        let status = status(&content).filter(|s| s.starts_with(PROPOSED))?;
-        Some(if with_status {
-            format!("{status}\t{path}")
-        } else {
-            path
+        let content = std::fs::read(root.join(&path))
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default();
+        let status = status(&content);
+        include(status).then(|| {
+            if with_status {
+                format!("{}\t{path}", status.unwrap_or_default())
+            } else {
+                path
+            }
         })
     }))
+}
+
+fn list(with_status: bool) -> ExitCode {
+    print_adrs("list", with_status, |_| true)
+}
+
+fn proposed(with_status: bool) -> ExitCode {
+    print_adrs("proposed", with_status, |status| {
+        status.is_some_and(|s| s.starts_with(PROPOSED))
+    })
 }
 
 /// `..` や `.` を字句的に取り除く。存在しないパスも扱えるようにcanonicalizeは使わない。
