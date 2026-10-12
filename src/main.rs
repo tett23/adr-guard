@@ -14,6 +14,9 @@ use serde_json::Value;
 
 const STATUS_PREFIX: &str = "ステータス:";
 const PROPOSED: &str = "提案";
+/// 意図したADRの書きかえを許可するトレーラーのキー（CI）と環境変数（pre-commit）（ADR 0008）。
+const ALLOW_TRAILER: &str = "ADR-Guard-Allow";
+const ALLOW_ENV: &str = "ADR_GUARD_ALLOW";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
 const USAGE: &str = "usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|list [--status]|proposed [--status]|--version|--help>";
 const HELP: &str = "\
@@ -168,14 +171,33 @@ fn pre_commit() -> ExitCode {
     };
 
     let violations = violations(&diff, "HEAD", "", cwd);
+    if violations.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    let allowed = std::env::var(ALLOW_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    if let Some(reason) = allowed {
+        eprintln!("pre-commit: {ALLOW_ENV} により許可しました: {reason}");
+        return ExitCode::SUCCESS;
+    }
     for violation in &violations {
         eprintln!("pre-commit: {violation}");
     }
-    if !violations.is_empty() {
-        eprintln!("{ADVICE}");
-        return ExitCode::FAILURE;
-    }
-    ExitCode::SUCCESS
+    eprintln!("{ADVICE}");
+    ExitCode::FAILURE
+}
+
+/// コミットメッセージのトレーラー `ADR-Guard-Allow` の、空でない最初の値（ADR 0008）。
+fn allow_reason(commit: &str, cwd: &Path) -> Option<String> {
+    let format = format!("--format=%(trailers:key={ALLOW_TRAILER},valueonly,separator=%x00)");
+    let values = git(&["log", "-1", &format, commit], cwd)?;
+    String::from_utf8_lossy(&values)
+        .split('\0')
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 /// `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。
@@ -219,11 +241,17 @@ fn check_range(base: &str, head: &str) -> ExitCode {
             failed = true;
             continue;
         };
-        for violation in violations(&diff, &parent, commit, cwd) {
-            eprintln!(
-                "check-range: {}: {violation}",
-                &commit[..commit.len().min(12)]
-            );
+        let short = &commit[..commit.len().min(12)];
+        let violations = violations(&diff, &parent, commit, cwd);
+        if violations.is_empty() {
+            continue;
+        }
+        if let Some(reason) = allow_reason(commit, cwd) {
+            eprintln!("check-range: {short}: {ALLOW_TRAILER} により許可しました: {reason}");
+            continue;
+        }
+        for violation in violations {
+            eprintln!("check-range: {short}: {violation}");
             failed = true;
         }
     }

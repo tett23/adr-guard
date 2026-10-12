@@ -58,6 +58,7 @@ fn module_repo() -> TempDir {
 fn pre_commit(dir: &Path) -> bool {
     Command::new(BIN)
         .arg("pre-commit")
+        .env_remove("ADR_GUARD_ALLOW")
         .current_dir(dir)
         .stderr(Stdio::null())
         .status()
@@ -672,5 +673,163 @@ mod listing {
             assert!(stdout.contains(word), "{word}: {stdout}");
         }
         assert!(!stdout.contains("--no-status"), "{stdout}");
+    }
+}
+
+mod allow {
+    use super::*;
+
+    const REWRITTEN: &str = "# ADR 0001: x\n\nステータス: 提案\n\n改変\n";
+
+    fn rev(dir: &Path) -> String {
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// ステージした変更を、pre-commit hookを通さずに `message` でコミットする。
+    fn commit_staged(dir: &Path, message: &str) -> String {
+        git(dir, &["commit", "-q", "--no-verify", "-m", message]);
+        rev(dir)
+    }
+
+    fn commit_rewrite(dir: &Path, path: &str, content: &str, message: &str) -> String {
+        write(dir, path, content);
+        git(dir, &["add", "-A"]);
+        commit_staged(dir, message)
+    }
+
+    fn check_range(dir: &Path, base: &str, head: &str) -> (bool, String) {
+        let output = Command::new(BIN)
+            .args(["check-range", base, head])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        (
+            output.status.success(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    }
+
+    fn allows(message: &str) -> bool {
+        let dir = repo();
+        let base = rev(dir.path());
+        let head = commit_rewrite(dir.path(), ADR, REWRITTEN, message);
+        check_range(dir.path(), &base, &head).0
+    }
+
+    #[test]
+    fn allows_rewrite_with_trailer() {
+        let dir = repo();
+        let base = rev(dir.path());
+        let head = commit_rewrite(
+            dir.path(),
+            ADR,
+            REWRITTEN,
+            "rewrite\n\nADR-Guard-Allow: リンクにするため",
+        );
+        let (success, stderr) = check_range(dir.path(), &base, &head);
+        assert!(success, "{stderr}");
+        assert!(stderr.contains("リンクにするため"), "{stderr}");
+    }
+
+    #[test]
+    fn allows_delete_and_rename_with_trailer() {
+        for args in [vec!["rm", "-q", ADR], vec!["mv", ADR, "docs/adr/0002-x.md"]] {
+            let dir = repo();
+            let base = rev(dir.path());
+            git(dir.path(), &args);
+            let head = commit_staged(dir.path(), "change\n\nADR-Guard-Allow: 理由");
+            assert!(check_range(dir.path(), &base, &head).0, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn trailer_key_is_case_insensitive() {
+        assert!(allows("rewrite\n\nadr-guard-allow: 理由"));
+    }
+
+    #[test]
+    fn rejects_empty_reason() {
+        assert!(!allows("rewrite\n\nADR-Guard-Allow:"));
+        assert!(!allows("rewrite\n\nADR-Guard-Allow:    "));
+    }
+
+    #[test]
+    fn rejects_trailer_outside_last_paragraph() {
+        assert!(!allows(
+            "rewrite\n\nADR-Guard-Allow: 理由\n\n最後の段落はトレーラーではない"
+        ));
+    }
+
+    #[test]
+    fn rejects_other_keys() {
+        assert!(!allows("rewrite\n\nADR-Guard-Allowed: 理由"));
+    }
+
+    #[test]
+    fn allows_only_commits_with_trailer() {
+        let dir = repo();
+        let p = dir.path();
+        let base = rev(p);
+        commit_rewrite(p, ADR, REWRITTEN, "allowed\n\nADR-Guard-Allow: 理由");
+        let head = commit_rewrite(p, ADR, "改変2\n", "not allowed");
+        let (success, stderr) = check_range(p, &base, &head);
+        assert!(!success);
+        let violations: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.contains("変更できません"))
+            .collect();
+        assert_eq!(violations.len(), 1, "{stderr}");
+        assert!(violations[0].contains(&head[..12]), "{stderr}");
+    }
+
+    #[test]
+    fn prints_nothing_for_commits_without_violations() {
+        let dir = repo();
+        let base = rev(dir.path());
+        let head = commit_rewrite(
+            dir.path(),
+            "README.md",
+            "x\n",
+            "readme\n\nADR-Guard-Allow: 理由",
+        );
+        assert_eq!(check_range(dir.path(), &base, &head), (true, String::new()));
+    }
+
+    fn pre_commit_with(dir: &Path, value: &str) -> (bool, String) {
+        let output = Command::new(BIN)
+            .arg("pre-commit")
+            .env("ADR_GUARD_ALLOW", value)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        (
+            output.status.success(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    }
+
+    #[test]
+    fn pre_commit_allows_with_env() {
+        let dir = repo();
+        write(dir.path(), ADR, REWRITTEN);
+        git(dir.path(), &["add", "-A"]);
+        let (success, stderr) = pre_commit_with(dir.path(), "リンクにするため");
+        assert!(success, "{stderr}");
+        assert!(stderr.contains("リンクにするため"), "{stderr}");
+    }
+
+    #[test]
+    fn pre_commit_rejects_empty_env() {
+        for value in ["", "   "] {
+            let dir = repo();
+            write(dir.path(), ADR, REWRITTEN);
+            git(dir.path(), &["add", "-A"]);
+            assert!(!pre_commit_with(dir.path(), value).0, "{value:?}");
+        }
     }
 }
