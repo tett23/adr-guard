@@ -134,6 +134,24 @@ jobs:
 - `git commit --no-verify` やGitHubのWeb UIでの編集はhookを通らない。CIで検査する。
 - CIでは、範囲内で一度でもADRを書きかえたコミットがあれば、後のコミットで戻していても失敗する。履歴を書きかえて（rebaseなどで）直す。
 
+### 意図してADRを書きかえる場合
+
+書式の修正など、人間が判断したうえでコミット済みのADRを書きかえる場合は、書きかえをほかの変更と分けて1つのコミットにし、次の2つを行う。
+
+- 手元のpre-commit hookは、環境変数 `ADR_GUARD_ALLOW` に理由を入れて通す。`--no-verify` と違い、同じhookのほかの検査は迂回しない。
+- CIの検査は、コミットメッセージの最後の段落に `ADR-Guard-Allow: <理由>` のトレーラーを付けて通す。
+
+```sh
+ADR_GUARD_ALLOW="ADRの参照をリンクにするため" git commit -F - <<'MSG'
+Link ADR references
+
+ADR-Guard-Allow: ADRの参照をリンクにするため
+MSG
+```
+
+許可はトレーラーを付けたコミットだけに及ぶ。理由は履歴に残るので、プルリクエストのレビューで確かめる。
+Claude Codeのhookには許可の手段がないため、Claude Codeに書きかえさせる場合はシェルから書きかえる。
+
 ## 開発
 
 クローン後、gitのhookを有効化する。このリポジトリでは、開発中の adr-guard 自身で検査する（`cargo run`）。
