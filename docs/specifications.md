@@ -16,7 +16,7 @@
 
 ### サブコマンド
 
-- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version` や `--help` に余分な引数が付いた場合も同じ。
+- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|list|proposed [--no-status]|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`list`、`--version`、`--help` に余分な引数が付いた場合や、`proposed` に `--no-status` 以外の引数が付いた場合も同じ。
 - `adr-guard --version`、`adr-guard -V`（ADR 0003）
   - `adr-guard <Cargo.toml の version>` の1行を標準出力に表示し、終了コード0で終わる。
 - `adr-guard --help`、`adr-guard -h`（ADR 0003）
@@ -34,6 +34,16 @@
   - `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。
   - `<base>` がコミットとして存在しなければ、`<head>` から辿れるすべてのコミットを検査する。
   - 違反したコミットとファイルをすべて表示し、1件でもあれば終了コード1で終わる。
+- `adr-guard list`（ADR 0005）
+  - 作業ツリーにあるすべてのADRのパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
+- `adr-guard proposed [--no-status]`（ADR 0005）
+  - 作業ツリーにあるADRのうち、ステータスが提案のものを、1行に1つずつ `<パス><タブ><ステータス>` の形で標準出力に出力し、終了コード0で終わる。
+  - `--no-status` では、パスだけを出力する。
+  - ステータスは、最初のステータスの行の `ステータス:` より後ろの、前後の空白を除いた値。これが `提案` で始まれば提案とする。ステータスの行が無いADRは対象外。
+- `list` と `proposed` で共通
+  - 対象は、`git ls-files --cached --others --exclude-standard` で列挙される（追跡されているか、追跡されていないが無視もされていない）ファイルのうち、ADRのディレクトリ以下にあって拡張子が `.md` で、作業ツリーに存在するもの。未コミットのADRも含む。
+  - パスはリポジトリのルートからの相対パスで、昇順に並べる。どのディレクトリで実行しても同じ出力になる。
+  - 該当が無ければ何も出力せずに終了コード0、gitのリポジトリの外などファイルを列挙できなければ終了コード1で終わる。
 
 ### 配布
 

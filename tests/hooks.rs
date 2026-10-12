@@ -495,3 +495,148 @@ mod options {
         assert!(stderr.contains("--help"), "{stderr}");
     }
 }
+
+mod listing {
+    use super::*;
+
+    fn adr(status: &str) -> String {
+        format!("# ADR\n\n{status}\n\n本文\n")
+    }
+
+    /// ADR 0005 のテスト設計のファイルを置いた一時リポジトリを作る。
+    fn listing_repo() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]);
+        git(p, &["config", "user.name", "test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+        let committed = [
+            ("docs/adr/0001-a.md", adr("ステータス: 採択")),
+            ("docs/adr/0002-b.md", adr("ステータス: 提案")),
+            ("docs/adr/0003-c.md", adr("ステータス: 採択→0004")),
+            ("docs/adr/0004-d.md", adr("ステータス: 却下")),
+            ("docs/adr/0005-e.md", adr("ステータス: 破棄")),
+            ("docs/adr/0006-f.md", "# ADR\n\n本文\n".to_owned()),
+            (
+                "docs/server/adr/0001-a.md",
+                adr("ステータス: 提案（レビュー中）"),
+            ),
+            ("docs/notes.md", adr("ステータス: 提案")),
+            ("docs/a/b/adr/0001-a.md", adr("ステータス: 提案")),
+            ("docs/adr/0009-i.txt", adr("ステータス: 提案")),
+            ("docs/adr/0010-j.md", adr("ステータス: 提案")),
+            (".gitignore", "docs/adr/0008-h.md\n".to_owned()),
+        ];
+        for (path, content) in &committed {
+            write(p, path, content);
+        }
+        git(p, &["add", "."]);
+        git(p, &["commit", "-qm", "init"]);
+        write(p, "docs/adr/0007-g.md", &adr("ステータス: 提案"));
+        write(p, "docs/adr/0008-h.md", &adr("ステータス: 提案"));
+        std::fs::remove_file(p.join("docs/adr/0010-j.md")).unwrap();
+        dir
+    }
+
+    fn run(dir: &Path, args: &[&str]) -> (i32, String) {
+        let output = Command::new(BIN)
+            .args(args)
+            .current_dir(dir)
+            .stderr(Stdio::null())
+            .output()
+            .unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stdout).unwrap(),
+        )
+    }
+
+    fn lines(lines: &[&str]) -> String {
+        lines.iter().map(|line| format!("{line}\n")).collect()
+    }
+
+    #[test]
+    fn lists_all_adrs() {
+        let dir = listing_repo();
+        let expected = lines(&[
+            "docs/adr/0001-a.md",
+            "docs/adr/0002-b.md",
+            "docs/adr/0003-c.md",
+            "docs/adr/0004-d.md",
+            "docs/adr/0005-e.md",
+            "docs/adr/0006-f.md",
+            "docs/adr/0007-g.md",
+            "docs/server/adr/0001-a.md",
+        ]);
+        assert_eq!(run(dir.path(), &["list"]), (0, expected.clone()));
+        assert_eq!(run(&dir.path().join("docs"), &["list"]), (0, expected));
+    }
+
+    #[test]
+    fn lists_proposed_adrs_with_status() {
+        let dir = listing_repo();
+        let expected = lines(&[
+            "docs/adr/0002-b.md\t提案",
+            "docs/adr/0007-g.md\t提案",
+            "docs/server/adr/0001-a.md\t提案（レビュー中）",
+        ]);
+        assert_eq!(run(dir.path(), &["proposed"]), (0, expected.clone()));
+        assert_eq!(run(&dir.path().join("docs"), &["proposed"]), (0, expected));
+    }
+
+    #[test]
+    fn lists_proposed_adrs_without_status() {
+        let dir = listing_repo();
+        let expected = lines(&[
+            "docs/adr/0002-b.md",
+            "docs/adr/0007-g.md",
+            "docs/server/adr/0001-a.md",
+        ]);
+        let args = ["proposed", "--no-status"];
+        assert_eq!(run(dir.path(), &args), (0, expected.clone()));
+        assert_eq!(run(&dir.path().join("docs"), &args), (0, expected));
+    }
+
+    #[test]
+    fn prints_nothing_without_adrs() {
+        let dir = TempDir::new().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        write(dir.path(), "README.md", "x\n");
+        for args in [&["list"][..], &["proposed"], &["proposed", "--no-status"]] {
+            assert_eq!(run(dir.path(), args), (0, String::new()), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn fails_outside_repository() {
+        let dir = TempDir::new().unwrap();
+        for args in [&["list"][..], &["proposed"], &["proposed", "--no-status"]] {
+            assert_eq!(run(dir.path(), args), (1, String::new()), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_extra_arguments() {
+        let dir = listing_repo();
+        for args in [
+            &["list", "x"][..],
+            &["list", "--no-status"],
+            &["proposed", "x"],
+            &["proposed", "--no-status", "x"],
+            &["proposed", "--no-status", "--no-status"],
+            &["--no-status", "proposed"],
+        ] {
+            assert_eq!(run(dir.path(), args), (64, String::new()), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn help_mentions_subcommands() {
+        let (code, stdout) = run(Path::new("."), &["--help"]);
+        assert_eq!(code, 0);
+        for word in ["list", "proposed", "--no-status"] {
+            assert!(stdout.contains(word), "{word}: {stdout}");
+        }
+    }
+}

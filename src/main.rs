@@ -3,18 +3,19 @@
 //! - `adr-guard pre-commit`: gitのpre-commit hookとして、ステージされた変更を検査する。
 //! - `adr-guard claude-hook`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
 //! - `adr-guard check-range <base> <head>`: CIで、範囲内の各コミットを検査する。
+//! - `adr-guard list`、`adr-guard proposed [--no-status]`: ADRと、ステータスが提案のADRを一覧する（ADR 0005）。
 //! - `adr-guard --version`、`adr-guard --help`: バージョンとヘルプを表示する（ADR 0003）。
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use serde_json::Value;
 
 const STATUS_PREFIX: &str = "ステータス:";
+const PROPOSED: &str = "提案";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
-const USAGE: &str =
-    "usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|--version|--help>";
+const USAGE: &str = "usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|list|proposed [--no-status]|--version|--help>";
 const HELP: &str = "\
 コミット済みのADR（docs/adr/、docs/<モジュール>/adr/）を、ステータスの行を除いて変更できないようにする。
 
@@ -22,6 +23,9 @@ const HELP: &str = "\
   adr-guard pre-commit                 gitのpre-commit hookとして、ステージされた変更を検査する
   adr-guard claude-hook                Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditを検査する
   adr-guard check-range <base> <head>  CIで、<base>..<head> の各コミットを検査する
+  adr-guard list                       ADRのパスを一覧する
+  adr-guard proposed [--no-status]     ステータスが提案のADRを、パスとステータスで一覧する
+                                       --no-status ではパスだけを出力する
   adr-guard --version, -V              バージョンを表示する
   adr-guard --help, -h                 このヘルプを表示する";
 
@@ -40,6 +44,9 @@ fn main() -> ExitCode {
         ["pre-commit"] => pre_commit(),
         ["claude-hook"] => claude_hook(),
         ["check-range", base, head] => check_range(base, head),
+        ["list"] => list(),
+        ["proposed"] => proposed(true),
+        ["proposed", "--no-status"] => proposed(false),
         ["--version" | "-V"] => {
             println!("{}", version());
             ExitCode::SUCCESS
@@ -62,6 +69,14 @@ fn is_adr_path(path: &str) -> bool {
         ["docs", module, "adr", _, ..] => !module.is_empty(),
         _ => false,
     }
+}
+
+/// 最初のステータスの行の、`ステータス:` より後ろの前後の空白を除いた値。
+fn status(content: &str) -> Option<&str> {
+    content
+        .lines()
+        .find_map(|line| line.strip_prefix(STATUS_PREFIX))
+        .map(str::trim)
 }
 
 /// ステータスの行を固定文字列に置きかえる。
@@ -218,6 +233,62 @@ fn check_range(base: &str, head: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// 作業ツリーにあるADR（`.md`）の、リポジトリのルートとルートからの相対パスの昇順の一覧。
+/// 追跡されているファイルと、追跡されていないが無視もされていないファイルを対象にする。
+fn adr_files() -> Option<(PathBuf, Vec<String>)> {
+    let top = git(&["rev-parse", "--show-toplevel"], Path::new("."))?;
+    let root = PathBuf::from(String::from_utf8_lossy(&top).trim());
+    let files = git(
+        &[
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ],
+        &root,
+    )?;
+    let mut paths: Vec<String> = files
+        .split(|&b| b == 0)
+        .map(|f| String::from_utf8_lossy(f).into_owned())
+        .filter(|path| is_adr_path(path) && path.ends_with(".md") && root.join(path).is_file())
+        .collect();
+    paths.sort();
+    paths.dedup();
+    Some((root, paths))
+}
+
+/// 行を標準出力に書く。パイプの先が閉じていても失敗にしない。
+fn print_lines(lines: impl Iterator<Item = String>) -> ExitCode {
+    let out: String = lines.map(|line| line + "\n").collect();
+    let _ = std::io::stdout().lock().write_all(out.as_bytes());
+    ExitCode::SUCCESS
+}
+
+fn list() -> ExitCode {
+    let Some((_, paths)) = adr_files() else {
+        eprintln!("list: ADRを列挙できませんでした");
+        return ExitCode::FAILURE;
+    };
+    print_lines(paths.into_iter())
+}
+
+fn proposed(with_status: bool) -> ExitCode {
+    let Some((root, paths)) = adr_files() else {
+        eprintln!("proposed: ADRを列挙できませんでした");
+        return ExitCode::FAILURE;
+    };
+    print_lines(paths.into_iter().filter_map(|path| {
+        let content = String::from_utf8_lossy(&std::fs::read(root.join(&path)).ok()?).into_owned();
+        let status = status(&content).filter(|s| s.starts_with(PROPOSED))?;
+        Some(if with_status {
+            format!("{path}\t{status}")
+        } else {
+            path
+        })
+    }))
+}
+
 /// `..` や `.` を字句的に取り除く。存在しないパスも扱えるようにcanonicalizeは使わない。
 fn lexical_normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -364,6 +435,38 @@ mod tests {
         ];
         for path in non_adr {
             assert!(!is_adr_path(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn status_values() {
+        let cases = [
+            ("# t\n\nステータス: 提案\n\n本文\n", Some("提案")),
+            ("ステータス:提案\n", Some("提案")),
+            (
+                "ステータス: 提案（レビュー中） \n",
+                Some("提案（レビュー中）"),
+            ),
+            ("ステータス: 提案\r\n", Some("提案")),
+            ("ステータス: 採択\nステータス: 提案\n", Some("採択")),
+            ("本文\n", None),
+            ("ステータス：提案\n", None),
+            ("前置き ステータス: 提案\n", None),
+        ];
+        for (content, expected) in cases {
+            assert_eq!(status(content), expected, "{content:?}");
+        }
+    }
+
+    #[test]
+    fn non_proposed_statuses() {
+        for content in [
+            "ステータス: 採択\n",
+            "ステータス: 採択→ADRのディレクトリはADR 0002\n",
+            "ステータス: 却下\n",
+            "ステータス: 破棄\n",
+        ] {
+            assert!(!status(content).unwrap().starts_with(PROPOSED), "{content}");
         }
     }
 
