@@ -47,7 +47,7 @@ adr-guard proposed | xargs "$EDITOR"
 | Linux（x86_64） | `x86_64-unknown-linux-gnu` |
 
 ```sh
-tag=v0.2.2
+tag=v0.2.3
 target=aarch64-apple-darwin
 archive="adr-guard-$tag-$target.tar.gz"
 curl -fsSLO "https://github.com/tett23/adr-guard/releases/download/$tag/$archive"
@@ -55,7 +55,7 @@ curl -fsSLO "https://github.com/tett23/adr-guard/releases/download/$tag/SHA256SU
 grep "$archive" SHA256SUMS | shasum -a 256 -c   # Linuxでは sha256sum -c
 tar -xzf "$archive"
 mv "${archive%.tar.gz}/adr-guard" ~/.local/bin/
-adr-guard --version   # adr-guard 0.2.2
+adr-guard --version   # adr-guard 0.2.3
 ```
 
 macOS向けのバイナリは、Apple Developer IDによる署名と公証をしていない。
@@ -65,7 +65,7 @@ macOS向けのバイナリは、Apple Developer IDによる署名と公証をし
 ### ソースから
 
 ```sh
-cargo install --git https://github.com/tett23/adr-guard --tag v0.2.2
+cargo install --git https://github.com/tett23/adr-guard --tag v0.2.3
 ```
 
 手元の adr-guard のバージョンは `adr-guard --version` で確かめる。
@@ -119,14 +119,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: tett23/adr-guard@v0.2.2
+      - uses: tett23/adr-guard@v0.2.3
         with:
           base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           head: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 ```
 
 - 範囲内の全コミットを読むため、`fetch-depth: 0` でチェックアウトする。
-- actionはタグかコミットのSHAで指定する。使う adr-guard のバージョンは、actionの `Cargo.toml` のバージョンになる。`version` 入力（例：`v0.2.2`）で変えられる。
+- actionはタグかコミットのSHAで指定する。使う adr-guard のバージョンは、actionの `Cargo.toml` のバージョンになる。`version` 入力（例：`v0.2.3`）で変えられる。
 
 ### 注意
 
