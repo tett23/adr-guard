@@ -574,6 +574,24 @@ mod listing {
     }
 
     #[test]
+    fn lists_all_adrs_with_status_before_path() {
+        let dir = listing_repo();
+        let expected = lines(&[
+            "採択\tdocs/adr/0001-a.md",
+            "提案\tdocs/adr/0002-b.md",
+            "採択→0004\tdocs/adr/0003-c.md",
+            "却下\tdocs/adr/0004-d.md",
+            "破棄\tdocs/adr/0005-e.md",
+            "\tdocs/adr/0006-f.md",
+            "提案\tdocs/adr/0007-g.md",
+            "提案（レビュー中）\tdocs/server/adr/0001-a.md",
+        ]);
+        let args = ["list", "--status"];
+        assert_eq!(run(dir.path(), &args), (0, expected.clone()));
+        assert_eq!(run(&dir.path().join("docs"), &args), (0, expected));
+    }
+
+    #[test]
     fn lists_proposed_adrs() {
         let dir = listing_repo();
         let expected = lines(&[
@@ -603,7 +621,12 @@ mod listing {
         let dir = TempDir::new().unwrap();
         git(dir.path(), &["init", "-q"]);
         write(dir.path(), "README.md", "x\n");
-        for args in [&["list"][..], &["proposed"], &["proposed", "--status"]] {
+        for args in [
+            &["list"][..],
+            &["list", "--status"],
+            &["proposed"],
+            &["proposed", "--status"],
+        ] {
             assert_eq!(run(dir.path(), args), (0, String::new()), "{args:?}");
         }
     }
@@ -611,7 +634,12 @@ mod listing {
     #[test]
     fn fails_outside_repository() {
         let dir = TempDir::new().unwrap();
-        for args in [&["list"][..], &["proposed"], &["proposed", "--status"]] {
+        for args in [
+            &["list"][..],
+            &["list", "--status"],
+            &["proposed"],
+            &["proposed", "--status"],
+        ] {
             assert_eq!(run(dir.path(), args), (1, String::new()), "{args:?}");
         }
     }
@@ -626,8 +654,10 @@ mod listing {
             &["proposed", "--no-status"],
             &["proposed", "--status", "x"],
             &["proposed", "--status", "--status"],
-            &["list", "--status"],
             &["--status", "proposed"],
+            &["list", "--status", "x"],
+            &["list", "--status", "--status"],
+            &["--status", "list"],
             &["--no-status", "proposed"],
         ] {
             assert_eq!(run(dir.path(), args), (64, String::new()), "{args:?}");

@@ -16,7 +16,7 @@
 
 ### サブコマンド
 
-- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|list|proposed [--status]|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`list`、`--version`、`--help` に余分な引数が付いた場合や、`proposed` に `--status` 以外の引数が付いた場合も同じ。
+- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|list [--status]|proposed [--status]|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
 - `adr-guard --version`、`adr-guard -V`（ADR 0003）
   - `adr-guard <Cargo.toml の version>` の1行を標準出力に表示し、終了コード0で終わる。
 - `adr-guard --help`、`adr-guard -h`（ADR 0003）
@@ -34,8 +34,9 @@
   - `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。
   - `<base>` がコミットとして存在しなければ、`<head>` から辿れるすべてのコミットを検査する。
   - 違反したコミットとファイルをすべて表示し、1件でもあれば終了コード1で終わる。
-- `adr-guard list`（ADR 0005）
+- `adr-guard list [--status]`（ADR 0005、0007）
   - 作業ツリーにあるすべてのADRのパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
+  - `--status` では、`<ステータス><タブ><パス>` の形で出力する。ステータスの行が無いADRはステータスを空にする（行はタブで始まる）。
 - `adr-guard proposed [--status]`（ADR 0005、0006）
   - 作業ツリーにあるADRのうち、ステータスが提案のもののパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
   - `--status` では、`<ステータス><タブ><パス>` の形で出力する。
