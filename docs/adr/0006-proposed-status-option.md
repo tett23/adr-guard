@@ -1,6 +1,6 @@
 # ADR 0006: `proposed` の既定の出力をパスだけにし、`--status` でステータスを前に付ける
 
-ステータス: 採択→list の --status はADR 0007
+ステータス: 採択→list の --status は[ADR 0007](0007-list-status-option.md)
 
 ## 文脈
 

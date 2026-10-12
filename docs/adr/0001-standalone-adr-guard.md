@@ -1,6 +1,6 @@
 # ADR 0001: adr-guard を独立したリポジトリとして提供する
 
-ステータス: 採択→ADRのディレクトリはADR 0002
+ステータス: 採択→ADRのディレクトリは[ADR 0002](0002-module-adr-directories.md)
 
 ## 文脈
 
