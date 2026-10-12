@@ -1,6 +1,6 @@
 # ADR 0005: ADRを一覧する `list` と `proposed` サブコマンド
 
-ステータス: 採択
+ステータス: 採択→proposed の出力はADR 0006
 
 ## 文脈
 
