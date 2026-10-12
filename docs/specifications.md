@@ -2,12 +2,12 @@
 
 ## adr-guard
 
-コミット済みのADRを、ステータスの行を除いて変更できないようにするツール（ADR 0001、0002）。
+コミット済みのADRを、ステータスの行を除いて変更できないようにするツール（[ADR 0001](adr/0001-standalone-adr-guard.md)、[0002](adr/0002-module-adr-directories.md)）。
 [tett23/send-to-kindle](https://github.com/tett23/send-to-kindle) の `tools/adr-guard` から、履歴ごと独立させた。
 
 ### 規則
 
-- 対象は、リポジトリのルートからの相対パスが次のどちらかで始まるファイル（ADR 0002）。`adr/` より下の深さは問わない。
+- 対象は、リポジトリのルートからの相対パスが次のどちらかで始まるファイル（[ADR 0002](adr/0002-module-adr-directories.md)）。`adr/` より下の深さは問わない。
   - `docs/adr/`
   - `docs/<モジュール>/adr/`。`<モジュール>` は空でない1つのパス要素（`/` を含まない）。モノレポでモジュールごとにADRを分ける場合に使う。
 - `docs/a/b/adr/` のような2段以上のモジュールや、`packages/<モジュール>/docs/adr/` のような `docs/` 以外の場所は対象外。
@@ -17,9 +17,9 @@
 ### サブコマンド
 
 - 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|list [--status]|proposed [--status]|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
-- `adr-guard --version`、`adr-guard -V`（ADR 0003）
+- `adr-guard --version`、`adr-guard -V`（[ADR 0003](adr/0003-version-and-help-options.md)）
   - `adr-guard <Cargo.toml の version>` の1行を標準出力に表示し、終了コード0で終わる。
-- `adr-guard --help`、`adr-guard -h`（ADR 0003）
+- `adr-guard --help`、`adr-guard -h`（[ADR 0003](adr/0003-version-and-help-options.md)）
   - 1行目に `--version` と同じ行、続けて概要と、各サブコマンドとオプションの説明を標準出力に表示し、終了コード0で終わる。
   - サブコマンドごとのヘルプ（`adr-guard pre-commit --help` など）はない。
 - `adr-guard pre-commit`
@@ -34,10 +34,10 @@
   - `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。
   - `<base>` がコミットとして存在しなければ、`<head>` から辿れるすべてのコミットを検査する。
   - 違反したコミットとファイルをすべて表示し、1件でもあれば終了コード1で終わる。
-- `adr-guard list [--status]`（ADR 0005、0007）
+- `adr-guard list [--status]`（[ADR 0005](adr/0005-list-and-proposed-subcommands.md)、[0007](adr/0007-list-status-option.md)）
   - 作業ツリーにあるすべてのADRのパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
   - `--status` では、`<ステータス><タブ><パス>` の形で出力する。ステータスの行が無いADRはステータスを空にする（行はタブで始まる）。
-- `adr-guard proposed [--status]`（ADR 0005、0006）
+- `adr-guard proposed [--status]`（[ADR 0005](adr/0005-list-and-proposed-subcommands.md)、[0006](adr/0006-proposed-status-option.md)）
   - 作業ツリーにあるADRのうち、ステータスが提案のもののパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
   - `--status` では、`<ステータス><タブ><パス>` の形で出力する。
   - ステータスは、最初のステータスの行の `ステータス:` より後ろの、前後の空白を除いた値。これが `提案` で始まれば提案とする。ステータスの行が無いADRは対象外。
@@ -50,7 +50,7 @@
 
 - `v` で始まるタグのpushで、GitHubのリリースを作成する（`.github/workflows/release.yml`）。
   - タグが `v<Cargo.toml の version>` と一致しなければ失敗する。一致すれば `cargo test --locked` を実行してからビルドする。
-  - ビルドしたバイナリの `--version` の出力が `adr-guard <タグからvを除いたもの>` と一致しなければ失敗する（ADR 0003）。
+  - ビルドしたバイナリの `--version` の出力が `adr-guard <タグからvを除いたもの>` と一致しなければ失敗する（[ADR 0003](adr/0003-version-and-help-options.md)）。
   - ターゲットは `aarch64-apple-darwin` と `x86_64-unknown-linux-gnu`。
   - 成果物はターゲットごとの `adr-guard-<タグ>-<ターゲット>.tar.gz`（中身はバイナリ、`LICENSE`、`README.md`）と `SHA256SUMS`。アーカイブを作ったあと、中身がそろっていることを確かめる。
   - `-` を含むタグはプレリリースとして作成する。
