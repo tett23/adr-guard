@@ -4,7 +4,7 @@
 
 ## 文脈
 
-ADR 0005 で、`adr-guard proposed` はステータスが提案のADRを `<パス><タブ><ステータス>` の形で出力し、`--no-status` を付けたときだけパスだけを出力するとした（`v0.2.2`）。
+[ADR 0005](0005-list-and-proposed-subcommands.md) で、`adr-guard proposed` はステータスが提案のADRを `<パス><タブ><ステータス>` の形で出力し、`--no-status` を付けたときだけパスだけを出力するとした（`v0.2.2`）。
 
 使ってみると、次の点がおかしかった。
 
@@ -17,12 +17,12 @@ ADR 0005 で、`adr-guard proposed` はステータスが提案のADRを `<パ�
 
 ### `adr-guard proposed`
 
-- 既定では、ステータスが提案のADRのパスだけを、1行に1つずつ標準出力に出力する（ADR 0005 の `--no-status` の出力と同じ）。
+- 既定では、ステータスが提案のADRのパスだけを、1行に1つずつ標準出力に出力する（[ADR 0005](0005-list-and-proposed-subcommands.md) の `--no-status` の出力と同じ）。
 - `adr-guard proposed --status` では、`<ステータス><タブ><パス>` の形で出力する。
   - 例：`提案	docs/adr/0006-proposed-status-option.md`
-  - `<ステータス>` の値は ADR 0005 と同じ（ステータスの行の `ステータス:` より後ろの、前後の空白を除いた値）。
+  - `<ステータス>` の値は [ADR 0005](0005-list-and-proposed-subcommands.md) と同じ（ステータスの行の `ステータス:` より後ろの、前後の空白を除いた値）。
 - `--no-status` は廃止する。付けた場合は、ほかの誤った引数と同じく使い方の1行を標準エラーに表示し、終了コード64で終わる。
-- 対象のADR、並び順、終了コード、`--status` を置ける位置（`proposed` の後ろだけ）など、ほかは ADR 0005 から変えない。`proposed` に `--status` 以外の引数が付いた場合（`--status` を2回付けた場合を含む）は終了コード64で終わる。
+- 対象のADR、並び順、終了コード、`--status` を置ける位置（`proposed` の後ろだけ）など、ほかは [ADR 0005](0005-list-and-proposed-subcommands.md) から変えない。`proposed` に `--status` 以外の引数が付いた場合（`--status` を2回付けた場合を含む）は終了コード64で終わる。
 
 ### 引数の誤りとヘルプ
 
@@ -32,8 +32,8 @@ ADR 0005 で、`adr-guard proposed` はステータスが提案のADRを `<パ�
 ### ドキュメントとリリース
 
 - `docs/specifications.md` と `README.md` の `proposed` の記述を更新する。READMEのパイプの例から `--no-status` を除く。
-- ADR 0004 にならってパッチバージョンを上げ、`v0.2.3` としてリリースする。
-- 採択後、ADR 0005 のステータスを `採択→proposed の出力はADR 0006` に変更する。
+- [ADR 0004](0004-release-version-options-as-patch.md) にならってパッチバージョンを上げ、`v0.2.3` としてリリースする。
+- 採択後、[ADR 0005](0005-list-and-proposed-subcommands.md) のステータスを `採択→proposed の出力はADR 0006` に変更する。
 
 ## 実装しないこと
 
@@ -45,7 +45,7 @@ ADR 0005 で、`adr-guard proposed` はステータスが提案のADRを `<パ�
 
 ### 結合テスト
 
-ADR 0005 の結合テストのうち `proposed` に関わるものを、次のように変える。そのほかの既存のテストは変えずにすべて通す。一時リポジトリのファイルは ADR 0005 と同じとする。
+[ADR 0005](0005-list-and-proposed-subcommands.md) の結合テストのうち `proposed` に関わるものを、次のように変える。そのほかの既存のテストは変えずにすべて通す。一時リポジトリのファイルは [ADR 0005](0005-list-and-proposed-subcommands.md) と同じとする。
 
 - `proposed`：標準出力が `docs/adr/0002-b.md`、`docs/adr/0007-g.md`、`docs/server/adr/0001-a.md` の3行で、この順に並び、終了コードが0である。
 - `proposed --status`：標準出力が `提案	docs/adr/0002-b.md`、`提案	docs/adr/0007-g.md`、`提案（レビュー中）	docs/server/adr/0001-a.md` の3行で、この順に並び、終了コードが0である。
@@ -62,5 +62,5 @@ ADR 0005 の結合テストのうち `proposed` に関わるものを、次の�
 
 - `--no-status` を廃止するため、`v0.2.2` で `--no-status` を使っているスクリプトは終了コード64で失敗するようになる。公開から間もなく、使う側が手元に限られるため、互換より仕様の分かりやすさを優先する。
 - 既定の出力の形が変わるため、`v0.2.2` の既定の出力（パスの後ろにステータス）を前提にしたスクリプトは誤った値を受け取る。上と同じ理由で許容する。
-- 出力の形が変わる変更をパッチバージョンで出すため、バージョン番号だけでは互換性を判断できない。ADR 0004 と同じく、hookやCIの検査の結果に影響しない変更であるため、許容する。
+- 出力の形が変わる変更をパッチバージョンで出すため、バージョン番号だけでは互換性を判断できない。[ADR 0004](0004-release-version-options-as-patch.md) と同じく、hookやCIの検査の結果に影響しない変更であるため、許容する。
 - ステータスをパスの前に置くため、`cut -f2` でパスを取り出す必要がある。パスだけが必要な場合は `--status` を付けなければよい。

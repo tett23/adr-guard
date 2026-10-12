@@ -4,8 +4,8 @@
 
 ## 文脈
 
-ADR 0005 で `adr-guard list` はADRのパスだけを出力するとし、ステータスの出力を「実装しないこと」とした。
-ADR 0006 で `adr-guard proposed --status` を加えたが、`list` の `--status` は同じく「実装しないこと」とした（`v0.2.3`）。
+[ADR 0005](0005-list-and-proposed-subcommands.md) で `adr-guard list` はADRのパスだけを出力するとし、ステータスの出力を「実装しないこと」とした。
+[ADR 0006](0006-proposed-status-option.md) で `adr-guard proposed --status` を加えたが、`list` の `--status` は同じく「実装しないこと」とした（`v0.2.3`）。
 
 すべてのADRを、採択・却下・破棄などのステータスとともに一覧したいことがある。
 `proposed --status` と同じ形で `list --status` を使えるようにし、2つのサブコマンドのオプションをそろえる。
@@ -18,7 +18,7 @@ ADR 0006 で `adr-guard proposed --status` を加えたが、`list` の `--statu
   - 例：`採択→ADRのディレクトリはADR 0002	docs/adr/0001-standalone-adr-guard.md`
   - `<ステータス>` の値は `proposed --status` と同じ（最初のステータスの行の `ステータス:` より後ろの、前後の空白を除いた値）。
   - ステータスの行が無いADRも出力し、`<ステータス>` を空にする（行はタブで始まる）。どの行も「ステータス、タブ、パス」の2列になるようにする。
-- 対象のADR、並び順、終了コードは `list`（ADR 0005）と同じ。
+- 対象のADR、並び順、終了コードは `list`（[ADR 0005](0005-list-and-proposed-subcommands.md)）と同じ。
 - `adr-guard list`（`--status` なし）の出力は変えない。
 - `list` に `--status` 以外の引数が付いた場合（`--status` を2回付けた場合を含む）は、ほかの誤った引数と同じく使い方の1行を標準エラーに表示し、終了コード64で終わる。`--status` を置けるのは `list` の後ろだけとする。
 
@@ -30,8 +30,8 @@ ADR 0006 で `adr-guard proposed --status` を加えたが、`list` の `--statu
 ### ドキュメントとリリース
 
 - `docs/specifications.md` と `README.md` の `list` の記述を更新する。
-- ADR 0004 にならってパッチバージョンを上げ、`v0.2.4` としてリリースする。
-- 採択後、ADR 0005 のステータスを `採択→proposed の出力はADR 0006、list の出力はADR 0007` に、ADR 0006 のステータスを `採択→list の --status はADR 0007` に変更する。
+- [ADR 0004](0004-release-version-options-as-patch.md) にならってパッチバージョンを上げ、`v0.2.4` としてリリースする。
+- 採択後、[ADR 0005](0005-list-and-proposed-subcommands.md) のステータスを `採択→proposed の出力はADR 0006、list の出力はADR 0007` に、[ADR 0006](0006-proposed-status-option.md) のステータスを `採択→list の --status はADR 0007` に変更する。
 
 ## 実装しないこと
 
@@ -43,7 +43,7 @@ ADR 0006 で `adr-guard proposed --status` を加えたが、`list` の `--statu
 
 ### 結合テスト
 
-既存のテストは変えずにすべて通す（`list --status` を終了コード64とする ADR 0006 の確認だけは、下のとおり置きかえる）。一時リポジトリのファイルは ADR 0005 と同じとする。
+既存のテストは変えずにすべて通す（`list --status` を終了コード64とする [ADR 0006](0006-proposed-status-option.md) の確認だけは、下のとおり置きかえる）。一時リポジトリのファイルは [ADR 0005](0005-list-and-proposed-subcommands.md) と同じとする。
 
 - `list --status`：標準出力が次の8行で、この順に並び、終了コードが0である。
   - `採択	docs/adr/0001-a.md`
@@ -57,7 +57,7 @@ ADR 0006 で `adr-guard proposed --status` を加えたが、`list` の `--statu
 - サブディレクトリ（`docs/`）で実行しても同じ出力になる。
 - ADRが無いリポジトリでは標準出力が空で終了コードが0、gitのリポジトリの外では終了コードが1である。
 - `list --status x`、`list --status --status`、`--status list` では終了コードが64である。`list --no-status` と `list x` も従来どおり64である。
-- `list`（`--status` なし）の出力が ADR 0005 のテストと同じである。
+- `list`（`--status` なし）の出力が [ADR 0005](0005-list-and-proposed-subcommands.md) のテストと同じである。
 
 ### リリース
 

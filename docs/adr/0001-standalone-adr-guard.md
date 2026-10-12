@@ -5,7 +5,7 @@
 ## 文脈
 
 adr-guard は、コミット済みのADR（`docs/adr/`）をステータスの行を除いて変更できないようにするツールである。
-[tett23/send-to-kindle](https://github.com/tett23/send-to-kindle) の `tools/adr-guard` として作られ、次の3つのサブコマンドを持つ（send-to-kindle の ADR 0001、0004）。
+[tett23/send-to-kindle](https://github.com/tett23/send-to-kindle) の `tools/adr-guard` として作られ、次の3つのサブコマンドを持つ（send-to-kindle の [ADR 0001](https://github.com/tett23/send-to-kindle/blob/main/docs/adr/0001-adr-immutability-hooks.md)、[0004](https://github.com/tett23/send-to-kindle/blob/main/docs/adr/0004-continuous-integration.md)）。
 
 - `adr-guard pre-commit`：gitのpre-commit hookとして、ステージされた変更を検査する。
 - `adr-guard claude-hook`：Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditを検査する。
@@ -31,7 +31,7 @@ ADRを使う運用はリポジトリを問わず同じであり、リポジト�
 
 ### 配布
 
-- `v` で始まるタグのpushで、GitHubのリリースを作成する（send-to-kindle の ADR 0006 と同じ方式）。
+- `v` で始まるタグのpushで、GitHubのリリースを作成する（send-to-kindle の [ADR 0006](https://github.com/tett23/send-to-kindle/blob/main/docs/adr/0006-release-binaries.md) と同じ方式）。
   - タグが `Cargo.toml` の `version` と一致することを確かめ、テストを実行してからビルドする。
   - ターゲットは `aarch64-apple-darwin` と `x86_64-unknown-linux-gnu` とする。
   - アーカイブ `adr-guard-<タグ>-<ターゲット>.tar.gz`（中身はバイナリ、`LICENSE`、`README.md`）と `SHA256SUMS` を添付する。
@@ -53,7 +53,7 @@ ADRを使う運用はリポジトリを問わず同じであり、リポジト�
 
 ### CI
 
-- send-to-kindle の ADR 0004 と同じく、`main` へのpushとプルリクエストで次を実行する。
+- send-to-kindle の [ADR 0004](https://github.com/tett23/send-to-kindle/blob/main/docs/adr/0004-continuous-integration.md) と同じく、`main` へのpushとプルリクエストで次を実行する。
   - `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`
   - このリポジトリ自身のADRの検査（`cargo run -- check-range`）
 - composite actionは、このリポジトリのCIでは検査しない（リリース前のバイナリが存在しないため）。リリース後に、使う側のリポジトリ（send-to-kindle）で確かめる。
