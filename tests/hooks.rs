@@ -833,3 +833,239 @@ mod allow {
         }
     }
 }
+
+mod links {
+    use super::*;
+
+    const ADR_A: &str = "# ADR 0001: a\n\nステータス: 採択\n\n本文\n";
+    const ADR_B: &str = "# ADR 0002: b\n\nステータス: 採択\n\nADR 0001 を参照\n";
+
+    /// ADR 0009 の結合テストの一時リポジトリ。
+    fn links_repo() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]);
+        git(p, &["config", "user.name", "test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+        for (path, content) in [
+            ("docs/adr/0001-a.md", ADR_A),
+            ("docs/adr/0002-b.md", ADR_B),
+            ("docs/server/adr/0001-a.md", ADR_A),
+            ("README.md", "ADR 0001 と ADR 0099\n"),
+            ("docs/server/notes.md", "ADR 0001\n"),
+            (
+                "docs/specifications.md",
+                "`ADR 0001` と [ADR 0002](adr/0002-b.md)\n",
+            ),
+        ] {
+            write(p, path, content);
+        }
+        git(p, &["add", "."]);
+        git(p, &["commit", "-qm", "init"]);
+        dir
+    }
+
+    fn run(dir: &Path, args: &[&str], allow: Option<&str>) -> (i32, String) {
+        let mut command = Command::new(BIN);
+        command
+            .args(args)
+            .current_dir(dir)
+            .env_remove("ADR_GUARD_ALLOW");
+        if let Some(value) = allow {
+            command.env("ADR_GUARD_ALLOW", value);
+        }
+        let output = command.output().unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    }
+
+    fn read(dir: &Path, path: &str) -> String {
+        std::fs::read_to_string(dir.join(path)).unwrap()
+    }
+
+    fn head(dir: &Path) -> String {
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    #[test]
+    fn reports_unlinked_references() {
+        let dir = links_repo();
+        let (code, stderr) = run(dir.path(), &["links"], None);
+        assert_eq!(code, 1, "{stderr}");
+        for expected in [
+            "README.md:1: ADR 0001 にリンクがありません",
+            "docs/adr/0002-b.md:5: ADR 0001 にリンクがありません",
+            "docs/server/notes.md:1: ADR 0001 にリンクがありません",
+            "adr-guard links --fix",
+        ] {
+            assert!(stderr.contains(expected), "{expected}: {stderr}");
+        }
+        assert!(!stderr.contains("0099"), "{stderr}");
+        assert!(!stderr.contains("specifications.md"), "{stderr}");
+    }
+
+    #[test]
+    fn succeeds_without_unlinked_references() {
+        let dir = repo();
+        assert_eq!(run(dir.path(), &["links"], None), (0, String::new()));
+    }
+
+    #[test]
+    fn fixes_documents_except_committed_adrs() {
+        let dir = links_repo();
+        let p = dir.path();
+        let (code, stderr) = run(p, &["links", "--fix"], None);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("--include-committed"), "{stderr}");
+        assert_eq!(
+            read(p, "README.md"),
+            "[ADR 0001](docs/adr/0001-a.md) と ADR 0099\n"
+        );
+        assert_eq!(
+            read(p, "docs/server/notes.md"),
+            "[ADR 0001](adr/0001-a.md)\n"
+        );
+        assert_eq!(
+            read(p, "docs/specifications.md"),
+            "`ADR 0001` と [ADR 0002](adr/0002-b.md)\n"
+        );
+        assert_eq!(read(p, "docs/adr/0002-b.md"), ADR_B);
+    }
+
+    #[test]
+    fn fixes_committed_adrs_with_include_committed() {
+        for args in [
+            ["links", "--fix", "--include-committed"],
+            ["links", "--include-committed", "--fix"],
+        ] {
+            let dir = links_repo();
+            let p = dir.path();
+            assert_eq!(run(p, &args, None).0, 0, "{args:?}");
+            assert_eq!(
+                read(p, "docs/adr/0002-b.md"),
+                ADR_B.replace("ADR 0001 を", "[ADR 0001](0001-a.md) を")
+            );
+            assert_eq!(run(p, &["links"], None), (0, String::new()), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_wrong_arguments() {
+        let dir = links_repo();
+        for args in [
+            &["links", "x"][..],
+            &["links", "--include-committed"],
+            &["links", "--fix", "--fix"],
+            &["links", "--status"],
+            &["pre-commit", "--fix"],
+            &["check-range", "--allow-links", "a"],
+        ] {
+            assert_eq!(run(dir.path(), args, None).0, 64, "{args:?}");
+        }
+        let outside = TempDir::new().unwrap();
+        assert_eq!(run(outside.path(), &["links"], None).0, 1);
+    }
+
+    #[test]
+    fn allow_links_permits_link_only_changes() {
+        let dir = links_repo();
+        let p = dir.path();
+        let base = head(p);
+        run(p, &["links", "--fix", "--include-committed"], None);
+        git(p, &["add", "-A"]);
+        assert_eq!(run(p, &["pre-commit"], None).0, 1);
+        let (code, stderr) = run(p, &["pre-commit", "--allow-links"], None);
+        assert_eq!(code, 0, "{stderr}");
+
+        git(p, &["commit", "-q", "--no-verify", "-m", "link"]);
+        let head = head(p);
+        assert_eq!(run(p, &["check-range", &base, &head], None).0, 1);
+        for args in [
+            ["check-range", "--allow-links", &base, &head],
+            ["check-range", &base, &head, "--allow-links"],
+        ] {
+            assert_eq!(run(p, &args, None).0, 0, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn allow_links_rejects_other_changes() {
+        for content in [
+            ADR_B.replace("ADR 0001 を", "[ADR 0002](0001-a.md) を"),
+            ADR_B.replace("ADR 0001 を参照", "[ADR 0001](0001-a.md) を改変"),
+        ] {
+            let dir = links_repo();
+            let p = dir.path();
+            let base = head(p);
+            write(p, "docs/adr/0002-b.md", &content);
+            git(p, &["add", "-A"]);
+            assert_eq!(run(p, &["pre-commit", "--allow-links"], None).0, 1);
+            git(p, &["commit", "-q", "--no-verify", "-m", "change"]);
+            let head = head(p);
+            let args = ["check-range", "--allow-links", &base, &head];
+            assert_eq!(run(p, &args, None).0, 1, "{content}");
+        }
+    }
+
+    #[test]
+    fn pre_commit_checks_staged_documents() {
+        let dir = links_repo();
+        let p = dir.path();
+        write(p, "docs/new.md", "ADR 0002 を参照\n");
+        git(p, &["add", "docs/new.md"]);
+        let (code, stderr) = run(p, &["pre-commit", "--allow-links"], None);
+        assert_eq!(code, 1);
+        assert!(
+            stderr.contains("pre-commit: docs/new.md:1: ADR 0002 にリンクがありません"),
+            "{stderr}"
+        );
+        assert_eq!(run(p, &["pre-commit"], Some("理由")).0, 1);
+
+        write(p, "docs/new.md", "[ADR 0002](adr/0002-b.md) を参照\n");
+        git(p, &["add", "docs/new.md"]);
+        assert_eq!(run(p, &["pre-commit"], None).0, 0);
+    }
+
+    #[test]
+    fn pre_commit_ignores_unstaged_documents() {
+        let dir = links_repo();
+        let p = dir.path();
+        write(p, "docs/unstaged.md", "ADR 0002\n");
+        write(p, "README.md", "ADR 0001 と ADR 0002\n");
+        assert_eq!(run(p, &["pre-commit"], None).0, 0);
+    }
+
+    #[test]
+    fn help_describes_everything() {
+        let output = Command::new(BIN).arg("--help").output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        for word in [
+            "pre-commit",
+            "claude-hook",
+            "check-range",
+            "list",
+            "proposed",
+            "links",
+            "--allow-links",
+            "--fix",
+            "--include-committed",
+            "--status",
+            "ADR_GUARD_ALLOW",
+            "ADR-Guard-Allow",
+            "64",
+            "  2 ",
+            "  1 ",
+            "  0 ",
+        ] {
+            assert!(stdout.contains(word), "{word}: {stdout}");
+        }
+    }
+}
