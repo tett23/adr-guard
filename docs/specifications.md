@@ -17,24 +17,32 @@
   - `check-range`：コミットメッセージのトレーラー（最後の段落）に `ADR-Guard-Allow: <理由>` があるコミットでは、ADRの変更・削除・リネームを違反としない。キーの大文字と小文字は区別しない。理由（前後の空白を除いた値）が空なら許可しない。許可したときは `check-range: <コミット>: ADR-Guard-Allow により許可しました: <理由>` を標準エラーに表示する。許可はトレーラーを付けたコミットだけに及ぶ。
   - `pre-commit`：環境変数 `ADR_GUARD_ALLOW` の値（前後の空白を除いたもの）が空でなければ、違反があっても成功し、`pre-commit: ADR_GUARD_ALLOW により許可しました: <値>` を標準エラーに表示する。
   - `claude-hook` には許可の手段がない。
+  - トレーラーは緊急用であり、ADRの参照にリンクを付ける変更には `--allow-links` を使う。
+- `pre-commit` と `check-range` に `--allow-links` を付けると、コミット済みのADRの変更のうち、ADRの参照のリンクだけが異なる変更を許可する（[ADR 0009](adr/0009-require-links-for-adr-references.md)）。変更の前後で、テキストが `ADR <4桁>` か `<4桁>` のインラインのリンクをテキストだけに置きかえ、ステータスの行を正規化してから比較する。
+- 文書（`.md`）の中のADRの参照にはリンクが要る（[ADR 0009](adr/0009-require-links-for-adr-references.md)）。
+  - 参照は `ADR` と半角の空白と4桁の数字（前後が英数字でないもの）。`、` か `,`（後ろに空白があってもよい）で区切って続く4桁の数字も参照とする。
+  - フェンスで囲んだコードブロック、インラインのコード（同じ数の `` ` `` の並びで囲んだ部分）、リンク（インラインと参照形式）の中と、ADR自身の番号は対象外。
+  - 参照先は、文書が `docs/<モジュール>/` 以下（`<モジュール>` は `adr` 以外）なら `docs/<モジュール>/adr/` を先に、ほかは `docs/adr/` から、ファイル名が `<番号>-` で始まる `.md` がちょうど1つあるものを探す。見つからない番号は検査しない。
+  - リンクは `[ADR <番号>](<文書のディレクトリからの相対パス>)`、続く番号は `[<番号>](<相対パス>)`。
 
 ### サブコマンド
 
-- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit|claude-hook|check-range <base> <head>|list [--status]|proposed [--status]|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
+- オプションは、サブコマンドの後ろならどの位置に置いてもよい。同じオプションを2回付けた場合や、受け付けないオプションを付けた場合は引数の誤りとする。
+- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit [--allow-links]|claude-hook|check-range [--allow-links] <base> <head>|list [--status]|proposed [--status]|links [--fix [--include-committed]]|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
 - `adr-guard --version`、`adr-guard -V`（[ADR 0003](adr/0003-version-and-help-options.md)）
   - `adr-guard <Cargo.toml の version>` の1行を標準出力に表示し、終了コード0で終わる。
 - `adr-guard --help`、`adr-guard -h`（[ADR 0003](adr/0003-version-and-help-options.md)）
   - 1行目に `--version` と同じ行、続けて概要と、各サブコマンドとオプションの説明を標準出力に表示し、終了コード0で終わる。
   - サブコマンドごとのヘルプ（`adr-guard pre-commit --help` など）はない。
-- `adr-guard pre-commit`
-  - ステージされたADRの変更のうち、HEADに存在するファイルについて、HEADとインデックスの内容を比較する。
+- `adr-guard pre-commit [--allow-links]`
+  - ステージされたADRの変更のうち、HEADに存在するファイルについて、HEADとインデックスの内容を比較する。HEADがない（初回コミット）ならこの比較はしない。
+  - ステージされた追加・変更の `.md` のファイルの、インデックスの内容にリンクの無いADRの参照があれば違反とする。参照先の解決には作業ツリーのADRを使う。`ADR_GUARD_ALLOW` はこの違反を許可しない（[ADR 0009](adr/0009-require-links-for-adr-references.md)）。
   - 違反があれば、`pre-commit: ` で始まるメッセージを表示して終了コード1で終わる。
-  - HEADがない（初回コミット）なら検査しない。
 - `adr-guard claude-hook`
   - Claude CodeのPreToolUse hookとして、標準入力のJSONを読む。Write・Edit・MultiEditを対象とする。
   - 対象ファイルがADRで、かつHEADに存在する場合、ツール実行後の内容を計算してHEADと比較する。違反があれば終了コード2で終わる。
   - それ以外（JSONを読めない、gitリポジトリでない、対象外のファイルなど）は終了コード0で終わる。
-- `adr-guard check-range <base> <head>`
+- `adr-guard check-range [--allow-links] <base> <head>`
   - `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。
   - `<base>` がコミットとして存在しなければ、`<head>` から辿れるすべてのコミットを検査する。
   - 違反したコミットとファイルをすべて表示し、1件でもあれば終了コード1で終わる。
@@ -45,7 +53,11 @@
   - 作業ツリーにあるADRのうち、ステータスが提案のもののパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
   - `--status` では、`<ステータス><タブ><パス>` の形で出力する。
   - ステータスは、最初のステータスの行の `ステータス:` より後ろの、前後の空白を除いた値。これが `提案` で始まれば提案とする。ステータスの行が無いADRは対象外。
-- `list` と `proposed` で共通
+- `adr-guard links [--fix [--include-committed]]`（[ADR 0009](adr/0009-require-links-for-adr-references.md)）
+  - 作業ツリーの `.md`（`list` と同じ列挙）にある、リンクの無いADRの参照を `<パス>:<行>: ADR <番号> にリンクがありません` の形で標準エラーに表示する。1件でもあれば修正の方法を表示して終了コード1、無ければ終了コード0で終わる。
+  - `--fix` では、コミット済みのADR（ADRのパスにあって `HEAD` に存在するもの）を除いて、参照をリンクに置きかえる。コミット済みのADRに参照が残れば終了コード1で終わる。
+  - `--include-committed`（`--fix` と一緒にだけ使える）では、コミット済みのADRも書きかえる。
+- `list` と `proposed` と `links` で共通
   - 対象は、`git ls-files --cached --others --exclude-standard` で列挙される（追跡されているか、追跡されていないが無視もされていない）ファイルのうち、ADRのディレクトリ以下にあって拡張子が `.md` で、作業ツリーに存在するもの。未コミットのADRも含む。
   - パスはリポジトリのルートからの相対パスで、昇順に並べる。どのディレクトリで実行しても同じ出力になる。
   - 該当が無ければ何も出力せずに終了コード0、gitのリポジトリの外などファイルを列挙できなければ終了コード1で終わる。
@@ -63,9 +75,9 @@
 
 ### composite action（`action.yml`）
 
-- 入力は `base`、`head`（必須）と `version`（任意）。
+- 入力は `base`、`head`（必須）と `version`、`allow-links`（既定は `false`）、`links`（既定は `true`）（任意）。
 - `version` を省略すると、action自身の `Cargo.toml` のバージョン（`v<version>`）を使う。
-- リリースから `x86_64-unknown-linux-gnu` のアーカイブと `SHA256SUMS` をダウンロードし、チェックサムを検証してから、ワークスペースで `adr-guard check-range <base> <head>` を実行する。
+- リリースから `x86_64-unknown-linux-gnu` のアーカイブと `SHA256SUMS` をダウンロードし、チェックサムを検証してから、ワークスペースで `adr-guard check-range <base> <head>` を実行する。`allow-links` が `true` なら `--allow-links` を付ける。`links` が `true` なら、続けて `adr-guard links` を実行する（[ADR 0009](adr/0009-require-links-for-adr-references.md)）。
 - Linux（x86_64）以外のランナーではエラーにする。
 
 ## 開発プロセス
@@ -78,7 +90,7 @@
 
 ### CI
 
-- `main` へのpushとプルリクエストで、`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` と、ADRの検査（`cargo run -- check-range`）を実行する。
+- `main` へのpushとプルリクエストで、`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` と、ADRの検査（`cargo run -- check-range --allow-links`）、リンクの検査（`cargo run -- links`）を実行する。
 
 ## 破棄したADR
 

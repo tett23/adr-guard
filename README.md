@@ -16,18 +16,23 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 - コミット済みのADRは、削除・リネームできない。
 - 新しいADRの追加と、未コミットのADRの編集は自由にできる。
 - `docs/adr/` から `docs/<モジュール>/adr/` への移動も、コミット済みのADRの移動として拒否する。移す場合は、新しい場所に新しいADRを作成する。
+- 文書（`.md`）の中のADRの参照（`ADR 0001` の形）には、ADRのファイルへのリンクを付ける（例：`[ADR 0001](docs/adr/0001-xxx.md)`、続く番号は `[ADR 0005](...)、[0006](...)`）。インラインのコード、コードブロック、リンクのテキストの中と、ADR自身の番号は対象外。参照先のADRが見つからない番号は検査しない。
 
 ## サブコマンド
 
 | サブコマンド | 用途 |
 |---|---|
-| `adr-guard pre-commit` | gitのpre-commit hookとして、ステージされた変更を検査する |
+| `adr-guard pre-commit [--allow-links]` | gitのpre-commit hookとして、ステージされた変更を検査する。ステージされた `.md` のリンクの無いADRの参照も拒否する |
 | `adr-guard claude-hook` | Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditによるコミット済みADRの変更を拒否する |
-| `adr-guard check-range <base> <head>` | `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。`<base>` が無いコミットならルートコミットから検査する |
+| `adr-guard check-range <base> <head> [--allow-links]` | `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。`<base>` が無いコミットならルートコミットから検査する |
 | `adr-guard list [--status]` | 作業ツリーにあるADR（未コミットのものも含む）のパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する（ステータスの行が無ければステータスは空） |
 | `adr-guard proposed [--status]` | ステータスが提案のADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
+| `adr-guard links [--fix [--include-committed]]` | 作業ツリーの `.md` にある、リンクの無いADRの参照を報告する。`--fix` でリンクに置きかえる（コミット済みのADRは `--include-committed` を付けたときだけ） |
 | `adr-guard --version`、`-V` | バージョンを表示する |
-| `adr-guard --help`、`-h` | ヘルプを表示する |
+| `adr-guard --help`、`-h` | ヘルプを表示する。AIがヘルプだけで使い方を把握できるよう、規則、各サブコマンドの出力の形と終了コード、例まで載せている |
+
+- `--allow-links`：コミット済みのADRで、ADRの参照のリンクだけが異なる変更（リンクを付ける・外す・リンク先を変える）を許可する。
+- オプションは、サブコマンドの後ろならどの位置に置いてもよい。
 
 レビュー待ちのADRを開く例：
 
@@ -78,7 +83,7 @@ cargo install --git https://github.com/tett23/adr-guard --tag v0.3.0
 
 ```sh
 #!/bin/sh
-exec adr-guard pre-commit
+exec adr-guard pre-commit --allow-links
 ```
 
 ```sh
@@ -126,6 +131,8 @@ jobs:
 ```
 
 - 範囲内の全コミットを読むため、`fetch-depth: 0` でチェックアウトする。
+- `check-range` の後に、チェックアウトした作業ツリーで `adr-guard links` を実行する。入力 `links: false` で止められる。
+- 入力 `allow-links: true` で `check-range` に `--allow-links` を付ける。
 - actionはタグかコミットのSHAで指定する。使う adr-guard のバージョンは、actionの `Cargo.toml` のバージョンになる。`version` 入力（例：`v0.3.0`）で変えられる。
 
 ### 注意
@@ -134,7 +141,17 @@ jobs:
 - `git commit --no-verify` やGitHubのWeb UIでの編集はhookを通らない。CIで検査する。
 - CIでは、範囲内で一度でもADRを書きかえたコミットがあれば、後のコミットで戻していても失敗する。履歴を書きかえて（rebaseなどで）直す。
 
+### 既存のリポジトリでリンクの検査を導入する
+
+1. pre-commit hookを `exec adr-guard pre-commit --allow-links` にし、actionに `allow-links: true` を付ける。移行が済むまではactionに `links: false` を付けてもよい。
+2. `adr-guard links --fix --include-committed` で、コミット済みのADRも含めて参照をリンクにする。
+3. 書きかえをほかの変更と分けて1つのコミットにする。`--allow-links` により、トレーラーは要らない。
+4. `adr-guard links` が終了コード0で終わることを確かめ、actionの `links: false` を外す。
+
 ### 意図してADRを書きかえる場合
+
+ADRの参照にリンクを付けるだけなら、上の `--allow-links` を使う。
+次の手段は、それ以外の書きかえのための緊急用であり、通常は使わない。
 
 書式の修正など、人間が判断したうえでコミット済みのADRを書きかえる場合は、書きかえをほかの変更と分けて1つのコミットにし、次の2つを行う。
 
