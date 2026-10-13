@@ -12,6 +12,10 @@ inputs:
     description: 使う adr-guard のリリースのタグ（例：v0.1.0）。省略すると、このactionと同じバージョン
     required: false
     default: ""
+  allow-status:
+    description: true なら、コミット済みのADRのステータスの行の変更を許可する（check-range --allow-status）
+    required: false
+    default: "false"
   allow-links:
     description: true なら、コミット済みのADRでADRの参照のリンクだけが異なる変更を許可する（check-range --allow-links）
     required: false
@@ -29,6 +33,7 @@ runs:
         BASE_SHA: ${{ inputs.base }}
         HEAD_SHA: ${{ inputs.head }}
         VERSION: ${{ inputs.version }}
+        ALLOW_STATUS: ${{ inputs.allow-status }}
         ALLOW_LINKS: ${{ inputs.allow-links }}
         LINKS: ${{ inputs.links }}
         ACTION_PATH: ${{ github.action_path }}
@@ -52,12 +57,15 @@ runs:
           tar -xzf "$archive"
         )
         bin="$dir/${archive%.tar.gz}/adr-guard"
-        # docs/adr/0009
-        allow_links=()
-        if [ "$ALLOW_LINKS" = "true" ]; then
-          allow_links=(--allow-links)
+        # docs/adr/0009, 0010
+        options=()
+        if [ "$ALLOW_STATUS" = "true" ]; then
+          options+=(--allow-status)
         fi
-        "$bin" check-range "${allow_links[@]}" "$BASE_SHA" "$HEAD_SHA"
+        if [ "$ALLOW_LINKS" = "true" ]; then
+          options+=(--allow-links)
+        fi
+        "$bin" check-range "${options[@]}" "$BASE_SHA" "$HEAD_SHA"
         if [ "$LINKS" = "true" ]; then
           "$bin" links
         fi

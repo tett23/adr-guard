@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cargo run --quiet --manifest-path \"$CLAUDE_PROJECT_DIR\"/Cargo.toml -- claude-hook"
+            "command": "cargo run --quiet --manifest-path \"$CLAUDE_PROJECT_DIR\"/Cargo.toml -- claude-hook --allow-status"
           }
         ]
       }

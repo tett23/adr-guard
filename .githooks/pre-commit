@@ -1,4 +1,4 @@
 #!/bin/sh
 # コミット済みのADR（docs/adr/）は「ステータス:」の行を除いて変更・削除できない。
 # このリポジトリでは、開発中の adr-guard 自身で検査する。
-exec cargo run --quiet --manifest-path "$(git rev-parse --show-toplevel)/Cargo.toml" -- pre-commit --allow-links
+exec cargo run --quiet --manifest-path "$(git rev-parse --show-toplevel)/Cargo.toml" -- pre-commit --allow-status --allow-links

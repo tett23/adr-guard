@@ -55,9 +55,10 @@ fn module_repo() -> TempDir {
     dir
 }
 
+/// 従来の既定（ステータスの行の変更を許可する）で `pre-commit` を実行する（ADR 0010）。
 fn pre_commit(dir: &Path) -> bool {
     Command::new(BIN)
-        .arg("pre-commit")
+        .args(["pre-commit", "--allow-status"])
         .env_remove("ADR_GUARD_ALLOW")
         .current_dir(dir)
         .stderr(Stdio::null())
@@ -66,9 +67,15 @@ fn pre_commit(dir: &Path) -> bool {
         .success()
 }
 
+/// 従来の既定（ステータスの行の変更を許可する）で `claude-hook` を実行する（ADR 0010）。
 fn claude_hook(dir: &Path, payload: serde_json::Value) -> i32 {
+    claude_hook_with(dir, payload, &["--allow-status"])
+}
+
+fn claude_hook_with(dir: &Path, payload: serde_json::Value, options: &[&str]) -> i32 {
     let mut child = Command::new(BIN)
         .arg("claude-hook")
+        .args(options)
         .env("CLAUDE_PROJECT_DIR", dir)
         .stdin(Stdio::piped())
         .stderr(Stdio::null())
@@ -332,9 +339,10 @@ mod check_range {
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
 
+    /// 従来の既定（ステータスの行の変更を許可する）で `check-range` を実行する（ADR 0010）。
     fn check_range(dir: &Path, base: &str, head: &str) -> bool {
         Command::new(BIN)
-            .args(["check-range", base, head])
+            .args(["check-range", "--allow-status", base, head])
             .current_dir(dir)
             .stderr(Stdio::null())
             .status()
@@ -1067,5 +1075,105 @@ mod links {
         ] {
             assert!(stdout.contains(word), "{word}: {stdout}");
         }
+    }
+}
+
+mod allow_status {
+    use super::*;
+    use serde_json::json;
+
+    const ADOPTED: &str = "# ADR 0001: x\n\nステータス: 採択\n\n本文\n";
+
+    fn run(dir: &Path, args: &[&str]) -> (i32, String) {
+        let output = Command::new(BIN)
+            .args(args)
+            .current_dir(dir)
+            .env_remove("ADR_GUARD_ALLOW")
+            .output()
+            .unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    }
+
+    fn head(dir: &Path) -> String {
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    #[test]
+    fn pre_commit_requires_allow_status_for_status_changes() {
+        let dir = repo();
+        let p = dir.path();
+        write(p, ADR, ADOPTED);
+        git(p, &["add", "-A"]);
+        let (code, stderr) = run(p, &["pre-commit"]);
+        assert_eq!(code, 1);
+        assert!(stderr.contains("--allow-status"), "{stderr}");
+        assert_eq!(run(p, &["pre-commit", "--allow-status"]).0, 0);
+        assert_eq!(run(p, &["pre-commit", "--allow-links"]).0, 1);
+        assert_eq!(
+            run(p, &["pre-commit", "--allow-links", "--allow-status"]).0,
+            0
+        );
+    }
+
+    #[test]
+    fn check_range_requires_allow_status_for_status_changes() {
+        let dir = repo();
+        let p = dir.path();
+        let base = head(p);
+        write(p, ADR, ADOPTED);
+        git(p, &["add", "-A"]);
+        git(p, &["commit", "-q", "--no-verify", "-m", "adopt"]);
+        let head = head(p);
+        let (code, stderr) = run(p, &["check-range", &base, &head]);
+        assert_eq!(code, 1);
+        assert!(stderr.contains("--allow-status"), "{stderr}");
+        for args in [
+            ["check-range", "--allow-status", &base, &head],
+            ["check-range", &base, &head, "--allow-status"],
+        ] {
+            assert_eq!(run(p, &args).0, 0, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn claude_hook_requires_allow_status_for_status_edits() {
+        let dir = repo();
+        let payload = || {
+            json!({"tool_name": "Edit", "tool_input": {
+                "file_path": ADR, "old_string": "ステータス: 提案", "new_string": "ステータス: 採択",
+            }})
+        };
+        assert_eq!(claude_hook_with(dir.path(), payload(), &[]), 2);
+        assert_eq!(
+            claude_hook_with(dir.path(), payload(), &["--allow-status"]),
+            0
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_options() {
+        let dir = repo();
+        for args in [
+            &["claude-hook", "--allow-links"][..],
+            &["pre-commit", "--allow-status", "--allow-status"],
+            &["list", "--allow-status"],
+        ] {
+            assert_eq!(run(dir.path(), args).0, 64, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn help_mentions_allow_status() {
+        let output = Command::new(BIN).arg("--help").output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("--allow-status"), "{stdout}");
     }
 }
