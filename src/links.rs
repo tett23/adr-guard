@@ -277,6 +277,17 @@ pub fn unlink(content: &str) -> String {
         .collect()
 }
 
+/// インラインのリンク `[テキスト](リンク先)` をテキストだけにする（ADR 0012 のステータスの値の解析）。
+pub fn link_texts(text: &str) -> String {
+    segments(text)
+        .into_iter()
+        .map(|segment| match segment {
+            Segment::InlineLink { text, .. } => text,
+            Segment::Text(raw) | Segment::Opaque(raw) => raw,
+        })
+        .collect()
+}
+
 /// 文書のパスから、参照先を探すADRのディレクトリの候補（優先する順）。
 ///
 /// 文書のディレクトリから上にたどった各祖先（ルートを含み、`docs` の要素を含むものを除く）について、

@@ -24,6 +24,10 @@ inputs:
     description: true なら、check-range の後に adr-guard links でリンクの無いADRの参照を検査する。既存の文書の移行が済むまで false にできる
     required: false
     default: "true"
+  check-status:
+    description: true なら、adr-guard check-status でADRのステータスの行がちょうど1つあるかを検査する。既存のADRの移行が済むまで false にできる
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -36,6 +40,7 @@ runs:
         ALLOW_STATUS: ${{ inputs.allow-status }}
         ALLOW_LINKS: ${{ inputs.allow-links }}
         LINKS: ${{ inputs.links }}
+        CHECK_STATUS: ${{ inputs.check-status }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
@@ -68,4 +73,8 @@ runs:
         "$bin" check-range "${options[@]}" "$BASE_SHA" "$HEAD_SHA"
         if [ "$LINKS" = "true" ]; then
           "$bin" links
+        fi
+        # docs/adr/0012
+        if [ "$CHECK_STATUS" = "true" ]; then
+          "$bin" check-status
         fi

@@ -143,7 +143,8 @@ mod pre_commit {
     #[test]
     fn allows_new_adr() {
         let dir = repo();
-        write(dir.path(), "docs/adr/0002-y.md", "y\n");
+        // ADRにはステータスの行がちょうど1つ要る（ADR 0012）
+        write(dir.path(), "docs/adr/0002-y.md", "ステータス: 提案\n\ny\n");
         git(dir.path(), &["add", "."]);
         assert!(pre_commit(dir.path()));
     }
@@ -193,7 +194,12 @@ mod pre_commit_module {
     #[test]
     fn allows_new_adr() {
         let dir = module_repo();
-        assert!(staged(dir.path(), "docs/client/adr/0001-y.md", "y\n"));
+        // ADRにはステータスの行がちょうど1つ要る（ADR 0012）
+        assert!(staged(
+            dir.path(),
+            "docs/client/adr/0001-y.md",
+            "ステータス: 提案\n\ny\n"
+        ));
     }
 
     #[test]
@@ -1275,5 +1281,183 @@ mod nested {
             std::fs::read_to_string(p.join("README.md")).unwrap(),
             format!("[ADR 0001]({ADR})\n")
         );
+    }
+}
+
+mod status_lines {
+    use super::*;
+    use serde_json::json;
+
+    const ENGLISH: &str = "# ADR 0002: b\n\nStatus: Proposed\n\nbody\n";
+
+    fn run(dir: &Path, args: &[&str], allow: Option<&str>) -> (i32, String, String) {
+        let mut command = Command::new(BIN);
+        command
+            .args(args)
+            .current_dir(dir)
+            .env_remove("ADR_GUARD_ALLOW");
+        if let Some(value) = allow {
+            command.env("ADR_GUARD_ALLOW", value);
+        }
+        let output = command.output().unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stdout).unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    }
+
+    fn head(dir: &Path) -> String {
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// `repo()` に、英語のステータスの行のADRと、ステータスの行が無いADRをコミットしたもの。
+    fn status_repo() -> TempDir {
+        let dir = repo();
+        let p = dir.path();
+        write(p, "docs/adr/0002-b.md", ENGLISH);
+        write(
+            p,
+            "docs/adr/0003-c.md",
+            "# ADR 0003: c\n\n- Status: Accepted\n\nbody\n",
+        );
+        write(p, "docs/notes.md", "no status\n");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "--no-verify", "-m", "statuses"]);
+        dir
+    }
+
+    #[test]
+    fn check_status_reports_missing_and_duplicated_lines() {
+        let dir = status_repo();
+        let p = dir.path();
+        write(
+            p,
+            "docs/adr/0004-d.md",
+            "ステータス: 採択\n\nStatus: Accepted\n",
+        );
+        let (code, _, stderr) = run(p, &["check-status"], None);
+        assert_eq!(code, 1);
+        for expected in [
+            "check-status: docs/adr/0003-c.md: ステータスの行がありません",
+            "check-status: docs/adr/0004-d.md:3: ステータスの行が2つ以上あります（最初は1行目）",
+        ] {
+            assert!(stderr.contains(expected), "{expected}: {stderr}");
+        }
+        assert!(!stderr.contains("0001-x.md"), "{stderr}");
+        assert!(!stderr.contains("0002-b.md"), "{stderr}");
+        assert!(!stderr.contains("notes.md"), "{stderr}");
+    }
+
+    #[test]
+    fn check_status_succeeds_with_one_line_each() {
+        let dir = repo();
+        assert_eq!(run(dir.path(), &["check-status"], None).0, 0);
+        assert_eq!(run(dir.path(), &["check-status", "x"], None).0, 64);
+    }
+
+    #[test]
+    fn pre_commit_checks_status_lines_of_staged_adrs() {
+        let dir = repo();
+        let p = dir.path();
+        write(p, "docs/adr/0002-b.md", "# ADR 0002\n\nbody\n");
+        git(p, &["add", "-A"]);
+        let (code, _, stderr) = run(p, &["pre-commit", "--allow-status"], Some("理由"));
+        assert_eq!(code, 1);
+        assert!(stderr.contains("ステータスの行がありません"), "{stderr}");
+
+        write(
+            p,
+            "docs/adr/0002-b.md",
+            "ステータス: 提案\nStatus: Proposed\n",
+        );
+        git(p, &["add", "-A"]);
+        assert_eq!(run(p, &["pre-commit", "--allow-status"], None).0, 1);
+
+        write(p, "docs/adr/0002-b.md", "ステータス: 提案\n");
+        git(p, &["add", "-A"]);
+        assert_eq!(run(p, &["pre-commit", "--allow-status"], None).0, 0);
+    }
+
+    #[test]
+    fn pre_commit_ignores_unstaged_adrs() {
+        let dir = repo();
+        write(dir.path(), "docs/adr/0002-b.md", "no status\n");
+        assert_eq!(
+            run(dir.path(), &["pre-commit", "--allow-status"], None).0,
+            0
+        );
+    }
+
+    #[test]
+    fn allow_status_permits_english_status_changes() {
+        let dir = status_repo();
+        let p = dir.path();
+        let base = head(p);
+        write(
+            p,
+            "docs/adr/0002-b.md",
+            &ENGLISH.replace("Proposed", "Accepted"),
+        );
+        git(p, &["add", "-A"]);
+        assert_eq!(run(p, &["pre-commit"], None).0, 1);
+        assert_eq!(run(p, &["pre-commit", "--allow-status"], None).0, 0);
+        git(p, &["commit", "-q", "--no-verify", "-m", "accept"]);
+        let head = head(p);
+        assert_eq!(run(p, &["check-range", &base, &head], None).0, 1);
+        let args = ["check-range", "--allow-status", &base, &head];
+        assert_eq!(run(p, &args, None).0, 0);
+    }
+
+    #[test]
+    fn allow_status_permits_adding_a_missing_status_line() {
+        let dir = status_repo();
+        let p = dir.path();
+        write(
+            p,
+            "docs/adr/0003-c.md",
+            // 空行などを足さず、ステータスの行1行だけを加える
+            "# ADR 0003: c\n\nステータス: 採択\n- Status: Accepted\n\nbody\n",
+        );
+        git(p, &["add", "-A"]);
+        assert_eq!(run(p, &["pre-commit"], None).0, 1);
+        assert_eq!(run(p, &["pre-commit", "--allow-status"], None).0, 0);
+    }
+
+    #[test]
+    fn claude_hook_permits_english_status_edits() {
+        let dir = status_repo();
+        let payload = json!({"tool_name": "Edit", "tool_input": {
+            "file_path": "docs/adr/0002-b.md", "old_string": "Proposed", "new_string": "Accepted",
+        }});
+        assert_eq!(claude_hook(dir.path(), payload), 0);
+    }
+
+    #[test]
+    fn proposed_and_list_use_the_status_adt() {
+        let dir = status_repo();
+        let p = dir.path();
+        write(p, "docs/adr/0004-d.md", "Status: Draft\n");
+        assert_eq!(
+            run(p, &["proposed"], None).1,
+            "docs/adr/0001-x.md\ndocs/adr/0002-b.md\n"
+        );
+        assert_eq!(
+            run(p, &["list", "--status"], None).1,
+            "提案\tdocs/adr/0001-x.md\nProposed\tdocs/adr/0002-b.md\n\tdocs/adr/0003-c.md\nDraft\tdocs/adr/0004-d.md\n"
+        );
+    }
+
+    #[test]
+    fn help_describes_status_lines() {
+        let (_, stdout, _) = run(Path::new("."), &["--help"], None);
+        for word in ["Status", "Proposed", "廃止", "check-status"] {
+            assert!(stdout.contains(word), "{word}: {stdout}");
+        }
     }
 }

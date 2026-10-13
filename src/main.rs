@@ -5,9 +5,11 @@
 //! - `adr-guard check-range [--allow-status] [--allow-links] <base> <head>`: CIで、範囲内の各コミットを検査する。
 //! - `adr-guard list [--status]`、`adr-guard proposed [--status]`: ADRと、ステータスが提案のADRを一覧する（ADR 0005、0006、0007）。
 //! - `adr-guard links [--fix [--include-committed]]`: リンクの無いADRの参照を検査・修正する（ADR 0009）。
+//! - `adr-guard check-status`: ADRのステータスの行（`ステータス:` か `Status:`）がちょうど1つあるか検査する（ADR 0012）。
 //! - `adr-guard --version`、`adr-guard --help`: バージョンとヘルプを表示する（ADR 0003、0009）。
 
 mod links;
+mod status;
 
 use std::collections::HashSet;
 use std::io::{Read, Write};
@@ -16,14 +18,12 @@ use std::process::{Command, ExitCode};
 
 use serde_json::Value;
 
-const STATUS_PREFIX: &str = "ステータス:";
-const PROPOSED: &str = "提案";
 /// 意図したADRの書きかえを許可するトレーラーのキー（CI）と環境変数（pre-commit）（ADR 0008）。
 const ALLOW_TRAILER: &str = "ADR-Guard-Allow";
 const ALLOW_ENV: &str = "ADR_GUARD_ALLOW";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
 const LINKS_ADVICE: &str = "adr-guard links --fix で修正できます。コミット済みのADRは --fix --include-committed で修正し、検査に --allow-links を付けてコミットしてください。";
-const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] <base> <head>|list [--status]|proposed [--status]|links [--fix [--include-committed]]|--version|--help>";
+const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] <base> <head>|list [--status]|proposed [--status]|links [--fix [--include-committed]]|check-status|--version|--help>";
 const HELP: &str = "\
 コミット済みのADR（Architecture Decision Record）を変更できないようにするツール。
 ステータスの行の変更（--allow-status）と、ADRの参照のリンクだけの変更（--allow-links）は、オプションで許可できる。
@@ -33,11 +33,17 @@ ADRとステータス:
   ADRは、リポジトリのルートからの相対パスのどこかに docs/adr/ または docs/<モジュール>/adr/ があり、その下にあるファイル。
   例: docs/adr/、docs/server/adr/、packages/server/docs/adr/、apps/web/docs/api/adr/。
   <モジュール> は1段だけ（docs/a/b/adr/ は対象外）。一覧や参照の検査では、拡張子が .md のものを扱う。
-  行頭が「ステータス:」の最初の行をステータスの行とする。値の例:
-    提案                               レビュー待ち。コミットせずに置く
-    採択                               採択済み
-    採択→<変わった部分>は[ADR NNNN](...)  一部が後のADRで変更された
-    却下、破棄                         採択されなかった、取りやめた
+  行頭が「ステータス:」または「Status:」の行をステータスの行とする（見出しの大文字・小文字と半角のコロンは
+  この形だけ。「- Status:」「* Status:」「status:」は認めない）。ADRはステータスの行をちょうど1つ持つ。
+  ステータスの行が無い、または2つ以上あるADRは、pre-commit と check-status で違反になる。
+  値は次の状態として解釈する（英語は大文字・小文字を区別しない）。どれにも当たらない値も違反にはしない:
+    提案…、Proposed                         Proposed: レビュー待ち。コミットせずに置く
+    採択…、Accepted                         Accepted: 採択済み
+    採択→<変わった部分>は[ADR NNNN](...)、
+    Superseded by ADR NNNN                  Superseded: 一部または全部が後のADRで変更された
+    却下…、Rejected                         Rejected: 採択されなかった
+    破棄…、Discarded                        Discarded: 採択されずに取りやめた
+    廃止…、Deprecated                       Deprecated: かつて採択され、いまは効力が無い
 
 規則:
   - コミット済みのADRは変更できない。削除・移動（リネーム）もできない。
@@ -57,7 +63,8 @@ ADRとステータス:
     gitのpre-commit hookから呼ぶ。ステージされた変更を検査する。
       - コミット済みのADRの変更（オプションで許可したものを除く）・削除・移動を拒否する。
       - ステージされた .md のファイルの、リンクの無いADRの参照を拒否する。
-    --allow-status  コミット済みのADRで、ステータスの行の変更を許可する。
+    ステージされたADRのステータスの行の数も検査する（初回のコミットでは検査しない）。
+    --allow-status  コミット済みのADRで、ステータスの行の変更（値・見出しの変更と、無かった行の追加）を許可する。
     --allow-links   コミット済みのADRで、ADRの参照のリンクだけが異なる変更（リンクを付ける・外す・
                     リンク先を変える）を許可する。
     終了コード: 0 問題なし、1 違反あり
@@ -80,7 +87,8 @@ ADRとステータス:
     終了コード: 0 成功、1 gitのリポジトリの外など
 
   adr-guard proposed [--status]
-    ステータスが「提案」で始まるADRのパスを、1行に1つずつ標準出力に出力する。レビュー待ちのADRを探すのに使う。
+    ステータスが Proposed（「提案…」か「Proposed」）のADRのパスを、1行に1つずつ標準出力に出力する。
+    レビュー待ちのADRを探すのに使う。
     --status  「<ステータス><タブ><パス>」の形で出力する。
     終了コード: 0 成功（該当なしでも0）、1 gitのリポジトリの外など
 
@@ -90,6 +98,11 @@ ADRとステータス:
     --include-committed  --fix と一緒に使う。コミット済みのADRも書きかえる。
                          書きかえたADRのコミットには、検査の --allow-links が必要。
     終了コード: 0 リンクの無い参照なし（--fix では、修正後に残っていない）、1 残っている
+
+  adr-guard check-status
+    作業ツリーのすべてのADR（.md）について、ステータスの行がちょうど1つあるかを検査し、違反を標準エラーに表示する。
+    CIから呼ぶ。
+    終了コード: 0 違反なし、1 違反あり
 
   adr-guard --version, -V   「adr-guard <バージョン>」を表示する
   adr-guard --help, -h      このヘルプを表示する
@@ -122,6 +135,7 @@ ADRとステータス:
   # with: の allow-status: true、allow-links: true
   adr-guard check-range --allow-status --allow-links \"$BASE_SHA\" \"$HEAD_SHA\"
   adr-guard links
+  adr-guard check-status
 
   # レビュー待ちのADRを開く
   adr-guard proposed | xargs \"$EDITOR\"
@@ -166,6 +180,7 @@ enum Subcommand<'a> {
         fix: bool,
         include_committed: bool,
     },
+    CheckStatus,
     Version,
     Help,
 }
@@ -207,6 +222,7 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
             fix: has("--fix"),
             include_committed: has("--include-committed"),
         }),
+        ("check-status", []) => Some(Subcommand::CheckStatus),
         ("--version" | "-V", []) => Some(Subcommand::Version),
         ("--help" | "-h", []) => Some(Subcommand::Help),
         _ => None,
@@ -225,6 +241,7 @@ fn main() -> ExitCode {
             fix,
             include_committed,
         }) => links(fix, include_committed),
+        Some(Subcommand::CheckStatus) => check_status(),
         Some(Subcommand::Version) => {
             println!("{}", version());
             ExitCode::SUCCESS
@@ -254,28 +271,15 @@ fn is_adr_path(path: &str) -> bool {
     })
 }
 
-/// 最初のステータスの行の、`ステータス:` より後ろの前後の空白を除いた値。
-fn status(content: &str) -> Option<&str> {
-    content
-        .lines()
-        .find_map(|line| line.strip_prefix(STATUS_PREFIX))
-        .map(str::trim)
-}
-
-/// ステータスの行を固定文字列に置きかえる。
+/// ステータスの行（`ステータス:` と `Status:` で始まるすべての行）を取り除く（ADR 0010、0012）。
+/// 値の変更、見出しの変更、ステータスの行が無かったADRへの追加が、正規化の後には同じになる。
 fn normalize(content: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(content.len());
-    for line in content.split_inclusive(|&b| b == b'\n') {
-        if line.starts_with(STATUS_PREFIX.as_bytes()) {
-            out.extend_from_slice(STATUS_PREFIX.as_bytes());
-            if line.ends_with(b"\n") {
-                out.push(b'\n');
-            }
-        } else {
-            out.extend_from_slice(line);
-        }
-    }
-    out
+    content
+        .split_inclusive(|&b| b == b'\n')
+        .filter(|line| !status::is_status_line(line))
+        .flatten()
+        .copied()
+        .collect()
 }
 
 #[cfg(test)]
@@ -357,8 +361,11 @@ fn violations(diff: &[u8], old_ref: &str, new_ref: &str, allow: Allow, cwd: &Pat
 fn pre_commit(allow: Allow) -> ExitCode {
     let cwd = Path::new(".");
     let adr_violations = adr_violations_in_index(allow, cwd);
-    let link_findings = unlinked_in_index(cwd);
-    let (Some(adr_violations), Some(link_findings)) = (adr_violations, link_findings) else {
+    let link_findings = unlinked_in_index();
+    let status_findings = status_violations_in_index(cwd);
+    let (Some(adr_violations), Some(link_findings), Some(status_findings)) =
+        (adr_violations, link_findings, status_findings)
+    else {
         eprintln!("pre-commit: ステージされた変更を取得できませんでした");
         return ExitCode::FAILURE;
     };
@@ -387,7 +394,10 @@ fn pre_commit(allow: Allow) -> ExitCode {
     if !link_findings.is_empty() {
         eprintln!("{LINKS_ADVICE}");
     }
-    if adr_failed || !link_findings.is_empty() {
+    for finding in &status_findings {
+        eprintln!("pre-commit: {finding}");
+    }
+    if adr_failed || !link_findings.is_empty() || !status_findings.is_empty() {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
@@ -412,10 +422,8 @@ fn adr_violations_in_index(allow: Allow, cwd: &Path) -> Option<Vec<String>> {
     Some(violations(&diff, "HEAD", "", allow, cwd))
 }
 
-/// ステージされた追加・変更の .md のファイルの、インデックスの内容にあるリンクの無い参照（ADR 0009）。
-fn unlinked_in_index(cwd: &Path) -> Option<Vec<String>> {
-    let (root, files) = work_tree_files()?;
-    let adrs = adr_paths(&files);
+/// ステージされた追加・変更の .md のファイルの、ルートからの相対パスとインデックスの内容。
+fn staged_documents(root: &Path) -> Option<Vec<(String, String)>> {
     let staged = git(
         &[
             "diff",
@@ -425,15 +433,45 @@ fn unlinked_in_index(cwd: &Path) -> Option<Vec<String>> {
             "--diff-filter=AM",
             "-z",
         ],
-        &root,
+        root,
     )?;
-    let findings = staged
-        .split(|&b| b == 0)
-        .map(|f| String::from_utf8_lossy(f).into_owned())
-        .filter(|path| path.ends_with(".md"))
-        .flat_map(|path| {
-            let content = git(&["show", &format!(":{path}")], cwd).unwrap_or_default();
-            let content = String::from_utf8_lossy(&content).into_owned();
+    Some(
+        staged
+            .split(|&b| b == 0)
+            .map(|f| String::from_utf8_lossy(f).into_owned())
+            .filter(|path| path.ends_with(".md"))
+            .map(|path| {
+                let content = git(&["show", &format!(":{path}")], root).unwrap_or_default();
+                let content = String::from_utf8_lossy(&content).into_owned();
+                (path, content)
+            })
+            .collect(),
+    )
+}
+
+/// ステージされた追加・変更のADRの、ステータスの行の数の違反（ADR 0012）。
+/// HEADが無ければ（初回コミット）検査しない。
+fn status_violations_in_index(cwd: &Path) -> Option<Vec<String>> {
+    if git(&["rev-parse", "--verify", "-q", "HEAD"], cwd).is_none() {
+        return Some(Vec::new());
+    }
+    let (root, _) = work_tree_files()?;
+    Some(
+        staged_documents(&root)?
+            .into_iter()
+            .filter(|(path, _)| is_adr_path(path))
+            .flat_map(|(path, content)| status::count_violations(&path, &content))
+            .collect(),
+    )
+}
+
+/// ステージされた追加・変更の .md のファイルの、インデックスの内容にあるリンクの無い参照（ADR 0009）。
+fn unlinked_in_index() -> Option<Vec<String>> {
+    let (root, files) = work_tree_files()?;
+    let adrs = adr_paths(&files);
+    let findings = staged_documents(&root)?
+        .into_iter()
+        .flat_map(|(path, content)| {
             let (_, findings) = scan_document(&path, &content, &adrs);
             findings
                 .into_iter()
@@ -648,11 +686,12 @@ fn print_lines(lines: impl Iterator<Item = String>) -> ExitCode {
 }
 
 /// `include` を満たすステータスのADRを出力する。`with_status` なら `<ステータス><タブ><パス>`、
-/// そうでなければパスだけを出力する。ステータスの行が無ければステータスを空にする（ADR 0007）。
+/// そうでなければパスだけを出力する。ステータスの行が無いか2つ以上あれば、ステータスを空にする
+/// （ADR 0007、0012）。
 fn print_adrs(
     command: &str,
     with_status: bool,
-    include: impl Fn(Option<&str>) -> bool,
+    include: impl Fn(Option<&status::StatusLine>) -> bool,
 ) -> ExitCode {
     let Some((root, paths)) = adr_files() else {
         eprintln!("{command}: ADRを列挙できませんでした");
@@ -662,10 +701,10 @@ fn print_adrs(
         let content = std::fs::read(root.join(&path))
             .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
             .unwrap_or_default();
-        let status = status(&content);
-        include(status).then(|| {
+        let line = status::status(&content);
+        include(line.as_ref()).then(|| {
             if with_status {
-                format!("{}\t{path}", status.unwrap_or_default())
+                format!("{}\t{path}", line.as_ref().map_or("", |line| line.raw))
             } else {
                 path
             }
@@ -678,9 +717,34 @@ fn list(with_status: bool) -> ExitCode {
 }
 
 fn proposed(with_status: bool) -> ExitCode {
-    print_adrs("proposed", with_status, |status| {
-        status.is_some_and(|s| s.starts_with(PROPOSED))
+    print_adrs("proposed", with_status, |line| {
+        line.is_some_and(|line| line.status == status::Status::Proposed)
     })
+}
+
+/// `adr-guard check-status`：作業ツリーのすべてのADRのステータスの行の数を検査する（ADR 0012）。
+fn check_status() -> ExitCode {
+    let Some((root, paths)) = adr_files() else {
+        eprintln!("check-status: ADRを列挙できませんでした");
+        return ExitCode::FAILURE;
+    };
+    let violations: Vec<String> = paths
+        .iter()
+        .flat_map(|path| {
+            let content = std::fs::read(root.join(path))
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .unwrap_or_default();
+            status::count_violations(path, &content)
+        })
+        .collect();
+    for violation in &violations {
+        eprintln!("check-status: {violation}");
+    }
+    if violations.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 /// `..` や `.` を字句的に取り除く。存在しないパスも扱えるようにcanonicalizeは使わない。
@@ -838,6 +902,13 @@ mod tests {
         }
     }
 
+    const PROPOSED: &str = "提案";
+
+    /// ステータスの行の元の値（ADR 0012 で `status::status` の戻り値が StatusLine になったための読みかえ）。
+    fn status(content: &str) -> Option<&str> {
+        status::status(content).map(|line| line.raw)
+    }
+
     #[test]
     fn status_values() {
         let cases = [
@@ -848,7 +919,8 @@ mod tests {
                 Some("提案（レビュー中）"),
             ),
             ("ステータス: 提案\r\n", Some("提案")),
-            ("ステータス: 採択\nステータス: 提案\n", Some("採択")),
+            // ステータスの行が2つ以上あれば None（ADR 0012）
+            ("ステータス: 採択\nステータス: 提案\n", None),
             ("本文\n", None),
             ("ステータス：提案\n", None),
             ("前置き ステータス: 提案\n", None),
