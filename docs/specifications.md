@@ -26,8 +26,14 @@
   - `--allow-status`（[ADR 0010](adr/0010-allow-status-option.md)、[0012](adr/0012-status-line-and-status-adt.md)）：ステータスの行（`ステータス:` と `Status:` で始まるすべての行）を取り除く。値と見出しの変更、ステータスの行が無かったADRへの追加、ステータスの行の位置の変更が許可される。`claude-hook` も受け付ける。
   - `--allow-links`（[ADR 0009](adr/0009-require-links-for-adr-references.md)）：下記のとおり、ADRの参照のリンクをテキストに戻す。`claude-hook` は受け付けない。
 - 違反のメッセージは、`--allow-status` があれば `コミット済みのADRはステータスの行以外を変更できません: <パス>`、なければ `コミット済みのADRは変更できません（ステータスの行の変更は --allow-status で許可できます）: <パス>`。
-- 意図してADRを書きかえる場合は、次の方法で違反を許可する（[ADR 0008](adr/0008-allow-intentional-adr-rewrites.md)）。
-  - `check-range`：コミットメッセージのトレーラー（最後の段落）に `ADR-Guard-Allow: <理由>` があるコミットでは、ADRの変更・削除・リネームを違反としない。キーの大文字と小文字は区別しない。理由（前後の空白を除いた値）が空なら許可しない。許可したときは `check-range: <コミット>: ADR-Guard-Allow により許可しました: <理由>` を標準エラーに表示する。許可はトレーラーを付けたコミットだけに及ぶ。
+- 監査や計測の記録も保護する（[ADR 0013](adr/0013-protect-audit-and-benchmark-records.md)）。
+  - 記録は、ADRのパスと同じ形で `<名前>` が `audit` か `benchmarks` のディレクトリ（どの深さの `docs/audit/`、`docs/benchmarks/`、`docs/<モジュール>/audit/`、`docs/<モジュール>/benchmarks/`）以下の、すべてのファイル。`docs/audits/`、`docs/benchmark/` は対象外。
+  - コミット済みの記録の変更、削除、リネームを違反とする。新規追加は許可する。`--allow-status` と `--allow-links` は記録には効かない。
+  - 違反のメッセージは `コミット済みの記録（docs/audit/、docs/benchmarks/）は変更できません: <パス>` と `コミット済みの記録（docs/audit/、docs/benchmarks/）は削除・移動できません: <パス>`。記録の違反があれば、案内に `記録を直す場合は、新しい記録を作成してください。` を加える。
+  - `pre-commit`、`check-range`、`claude-hook` で検査する。`claude-hook` では、コミット済みの記録の内容を変える編集を終了コード2で拒否する。
+  - `links --fix` は、コミット済みの記録をコミット済みのADRと同じく既定では書きかえず、`--include-committed` で書きかえたときは `<パス>: コミット済みの記録です。コミットには ADR-Guard-Allow のトレーラーが要ります` を表示する。
+- 意図してADRや記録を書きかえる場合は、次の方法で違反を許可する（[ADR 0008](adr/0008-allow-intentional-adr-rewrites.md)、[0013](adr/0013-protect-audit-and-benchmark-records.md)）。
+  - `check-range`：コミットメッセージのトレーラー（最後の段落）に `ADR-Guard-Allow: <理由>` があるコミットでは、ADRと記録の変更・削除・リネームを違反としない。キーの大文字と小文字は区別しない。理由（前後の空白を除いた値）が空なら許可しない。許可したときは `check-range: <コミット>: ADR-Guard-Allow により許可しました: <理由>` を標準エラーに表示する。許可はトレーラーを付けたコミットだけに及ぶ。
   - `pre-commit`：環境変数 `ADR_GUARD_ALLOW` の値（前後の空白を除いたもの）が空でなければ、違反があっても成功し、`pre-commit: ADR_GUARD_ALLOW により許可しました: <値>` を標準エラーに表示する。
   - `claude-hook` には、環境変数やトレーラーによる許可の手段がない。
   - トレーラーは緊急用であり、ADRの参照にリンクを付ける変更には `--allow-links` を使う。
