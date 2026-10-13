@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/tett23/adr-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/tett23/adr-guard/actions/workflows/ci.yml)
 
-コミット済みのADR（`docs/adr/`、モノレポでは `docs/<モジュール>/adr/` も）を変更できないようにするツール。ステータスの行（`ステータス:` で始まる行）の変更と、ADRの参照のリンクだけの変更は、オプションで許可する。
+コミット済みのADR（`docs/adr/`、モノレポでは `docs/<モジュール>/adr/` や `packages/<パッケージ>/docs/adr/` なども）を変更できないようにするツール。ステータスの行（`ステータス:` で始まる行）の変更と、ADRの参照のリンクだけの変更は、オプションで許可する。
 
 ADRは決定の記録であり、あとから書きかえると経緯が失われる。
 仕様を変える場合は、元のADRを書きかえずに新しいADRを作成する。
@@ -10,7 +10,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 
 ## 規則
 
-- 対象は `docs/adr/` と `docs/<モジュール>/adr/`（例：`docs/server/adr/`）以下のファイル。モジュールは1段だけで、`docs/a/b/adr/` は対象外。
+- 対象は `docs/adr/` と `docs/<モジュール>/adr/`（例：`docs/server/adr/`）以下のファイル。どの深さにあってもよく、`packages/server/docs/adr/` や `apps/web/docs/api/adr/` も対象になる（[ADR 0011](docs/adr/0011-nested-adr-directories.md)）。モジュールは1段だけで、`docs/a/b/adr/` は対象外。
 - 設定は不要。モノレポでモジュールごとにADRを分けても、導入の手順は変わらない。
 - コミット済みのADRは変更できない。ただし、検査に `--allow-status` を付けると `ステータス:` で始まる行の変更を、`--allow-links` を付けるとADRの参照のリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
 - コミット済みのADRは、削除・リネームできない。

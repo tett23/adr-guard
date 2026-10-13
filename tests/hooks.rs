@@ -1177,3 +1177,103 @@ mod allow_status {
         assert!(stdout.contains("--allow-status"), "{stdout}");
     }
 }
+
+mod nested {
+    use super::*;
+    use serde_json::json;
+
+    const PACKAGE_ADR: &str = "packages/server/docs/adr/0001-a.md";
+
+    /// `repo()` に加えて、パッケージの中のADRをコミットした一時リポジトリ（ADR 0011）。
+    fn nested_repo() -> TempDir {
+        let dir = repo();
+        let p = dir.path();
+        write(p, PACKAGE_ADR, CONTENT);
+        git(p, &["add", "."]);
+        git(p, &["commit", "-qm", "package"]);
+        dir
+    }
+
+    fn head(dir: &Path) -> String {
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn run(dir: &Path, args: &[&str]) -> (i32, String) {
+        let output = Command::new(BIN)
+            .args(args)
+            .current_dir(dir)
+            .env_remove("ADR_GUARD_ALLOW")
+            .output()
+            .unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stdout).unwrap(),
+        )
+    }
+
+    #[test]
+    fn pre_commit_protects_package_adrs() {
+        let dir = nested_repo();
+        let p = dir.path();
+        write(p, PACKAGE_ADR, &CONTENT.replace("本文", "改変"));
+        git(p, &["add", "-A"]);
+        assert!(!pre_commit(p));
+
+        write(p, PACKAGE_ADR, &CONTENT.replace("提案", "採択"));
+        git(p, &["add", "-A"]);
+        assert!(pre_commit(p));
+    }
+
+    #[test]
+    fn check_range_protects_package_adrs() {
+        let dir = nested_repo();
+        let p = dir.path();
+        let base = head(p);
+        write(p, PACKAGE_ADR, &CONTENT.replace("本文", "改変"));
+        git(p, &["add", "-A"]);
+        git(p, &["commit", "-q", "--no-verify", "-m", "change"]);
+        let head = head(p);
+        let args = ["check-range", "--allow-status", &base, &head];
+        assert_eq!(run(p, &args).0, 1);
+    }
+
+    #[test]
+    fn claude_hook_protects_package_adrs() {
+        let dir = nested_repo();
+        let payload = json!({"tool_name": "Edit", "tool_input": {
+            "file_path": PACKAGE_ADR, "old_string": "本文", "new_string": "改変",
+        }});
+        assert_eq!(claude_hook(dir.path(), payload), 2);
+    }
+
+    #[test]
+    fn list_includes_package_adrs() {
+        let dir = nested_repo();
+        assert_eq!(
+            run(dir.path(), &["list"]),
+            (0, format!("{ADR}\n{PACKAGE_ADR}\n"))
+        );
+    }
+
+    #[test]
+    fn links_resolve_from_the_nearest_docs() {
+        let dir = nested_repo();
+        let p = dir.path();
+        write(p, "packages/server/README.md", "ADR 0001\n");
+        write(p, "README.md", "ADR 0001\n");
+        assert_eq!(run(p, &["links", "--fix"]).0, 0);
+        assert_eq!(
+            std::fs::read_to_string(p.join("packages/server/README.md")).unwrap(),
+            "[ADR 0001](docs/adr/0001-a.md)\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(p.join("README.md")).unwrap(),
+            format!("[ADR 0001]({ADR})\n")
+        );
+    }
+}
