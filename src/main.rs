@@ -1,4 +1,4 @@
-//! コミット済みのADR（docs/adr/、docs/<モジュール>/adr/）を変更できないようにするガード。ステータスの行とリンクの変更はオプションで許可する（ADR 0010）。
+//! コミット済みのADR（どの深さかの docs/adr/、docs/<モジュール>/adr/）を変更できないようにするガード。ステータスの行とリンクの変更はオプションで許可する（ADR 0010）。
 //!
 //! - `adr-guard pre-commit [--allow-status] [--allow-links]`: gitのpre-commit hookとして、ステージされた変更を検査する。
 //! - `adr-guard claude-hook [--allow-status]`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
@@ -30,7 +30,8 @@ const HELP: &str = "\
 gitのpre-commit hook、Claude CodeのPreToolUse hook、CI（GitHub Actions）の3か所で検査する。
 
 ADRとステータス:
-  ADRは、リポジトリのルートからの相対パスが docs/adr/ または docs/<モジュール>/adr/ 以下にあるファイル。
+  ADRは、リポジトリのルートからの相対パスのどこかに docs/adr/ または docs/<モジュール>/adr/ があり、その下にあるファイル。
+  例: docs/adr/、docs/server/adr/、packages/server/docs/adr/、apps/web/docs/api/adr/。
   <モジュール> は1段だけ（docs/a/b/adr/ は対象外）。一覧や参照の検査では、拡張子が .md のものを扱う。
   行頭が「ステータス:」の最初の行をステータスの行とする。値の例:
     提案                               レビュー待ち。コミットせずに置く
@@ -47,7 +48,8 @@ ADRとステータス:
   - 文書（.md）の中のADRの参照（ADR 0001 の形）には、ADRのファイルへのリンクを付ける。
     例: [ADR 0001](docs/adr/0001-xxx.md)、続く番号は [ADR 0005](...)、[0006](...)
     インラインのコード、コードブロック、リンクのテキストの中と、ADR自身の番号は対象外。
-    参照先は、docs/<モジュール>/ 以下の文書なら docs/<モジュール>/adr/、ほかは docs/adr/ から探す。
+    参照先は、文書から近い順に、祖先の docs/<モジュール>/adr/（文書がその docs/<モジュール>/ 以下のとき）と
+    docs/adr/ から探す。例: packages/server/README.md は packages/server/docs/adr/ を先に、ルートの docs/adr/ を後に探す。
     参照先のADRが見つからない番号は検査しない。
 
 サブコマンド:
@@ -238,13 +240,18 @@ fn main() -> ExitCode {
     }
 }
 
-/// リポジトリのルートからの相対パスが、`docs/adr/` か `docs/<モジュール>/adr/` 以下にあるか（ADR 0002）。
+/// リポジトリのルートからの相対パスが、どの深さかの `docs/adr/` か `docs/<モジュール>/adr/` 以下にあるか
+/// （ADR 0002、0011）。`docs` より前の要素（`packages/server/` など）は空でなければ名前を問わない。
 fn is_adr_path(path: &str) -> bool {
-    match path.split('/').collect::<Vec<_>>().as_slice() {
-        ["docs", "adr", _, ..] => true,
-        ["docs", module, "adr", _, ..] => !module.is_empty(),
-        _ => false,
-    }
+    let parts: Vec<&str> = path.split('/').collect();
+    (0..parts.len()).any(|start| {
+        parts[..start].iter().all(|part| !part.is_empty())
+            && match &parts[start..] {
+                ["docs", "adr", _, ..] => true,
+                ["docs", module, "adr", _, ..] => !module.is_empty(),
+                _ => false,
+            }
+    })
 }
 
 /// 最初のステータスの行の、`ステータス:` より後ろの前後の空白を除いた値。
@@ -796,6 +803,11 @@ mod tests {
             "docs/adr/adr/a.md",
             "docs/server/adr/0001-a.md",
             "docs/server/adr/images/a.png",
+            // ADR 0011
+            "packages/server/docs/adr/0001-a.md",
+            "apps/web/docs/adr/0001-a.md",
+            "packages/server/docs/api/adr/0001-a.md",
+            "src/docs/server/adr/a.md",
         ];
         for path in adr {
             assert!(is_adr_path(path), "{path}");
@@ -814,9 +826,12 @@ mod tests {
             "docs/a/b/adr/0001-a.md",
             "docs//adr/0001-a.md",
             "docs/specifications.md",
-            "src/docs/server/adr/a.md",
-            "packages/server/docs/adr/0001-a.md",
             "README.md",
+            // ADR 0011
+            "packages/server/docs/a/b/adr/0001-a.md",
+            "packages/server/adr/0001-a.md",
+            "packages/server/docs/adrs/0001-a.md",
+            "packages//docs/adr/0001-a.md",
         ];
         for path in non_adr {
             assert!(!is_adr_path(path), "{path}");
@@ -965,6 +980,7 @@ mod tests {
         let cases = [
             ("docs/adr/0001-a.md", Some("0001")),
             ("docs/server/adr/0012-b.md", Some("0012")),
+            ("packages/server/docs/adr/0003-c.md", Some("0003")),
             ("docs/adr/notes.md", None),
             ("docs/adr/0001.md", None),
             ("docs/0001-a.md", None),

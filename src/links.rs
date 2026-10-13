@@ -278,16 +278,28 @@ pub fn unlink(content: &str) -> String {
 }
 
 /// 文書のパスから、参照先を探すADRのディレクトリの候補（優先する順）。
+///
+/// 文書のディレクトリから上にたどった各祖先（ルートを含み、`docs` の要素を含むものを除く）について、
+/// 文書が `<祖先>/docs/<モジュール>/` 以下なら `<祖先>/docs/<モジュール>/adr` を、続けて
+/// `<祖先>/docs/adr` を候補にする。近い祖先が先（ADR 0009、0011）。
 pub fn candidate_dirs(doc: &str) -> Vec<String> {
-    let module = match doc.split('/').collect::<Vec<_>>().as_slice() {
-        ["docs", module, _, ..] if !module.is_empty() && *module != "adr" => {
-            Some(format!("docs/{module}/adr"))
-        }
-        _ => None,
-    };
-    module
-        .into_iter()
-        .chain(std::iter::once("docs/adr".to_owned()))
+    let parts: Vec<&str> = doc.split('/').collect();
+    let dirs = &parts[..parts.len().saturating_sub(1)];
+    (0..=dirs.len())
+        .rev()
+        .filter(|&depth| !dirs[..depth].contains(&"docs"))
+        .flat_map(|depth| {
+            let prefix: String = dirs[..depth].iter().map(|dir| format!("{dir}/")).collect();
+            let module = match &dirs[depth..] {
+                ["docs", module, ..] if !module.is_empty() && *module != "adr" => {
+                    Some(format!("{prefix}docs/{module}/adr"))
+                }
+                _ => None,
+            };
+            module
+                .into_iter()
+                .chain(std::iter::once(format!("{prefix}docs/adr")))
+        })
         .collect()
 }
 
@@ -433,7 +445,7 @@ mod tests {
 
     #[test]
     fn candidate_directories() {
-        let cases: [(&str, &[&str]); 6] = [
+        let cases: [(&str, &[&str]); 9] = [
             ("README.md", &["docs/adr"]),
             ("docs/specifications.md", &["docs/adr"]),
             ("docs/adr/0002-b.md", &["docs/adr"]),
@@ -442,7 +454,25 @@ mod tests {
                 &["docs/server/adr", "docs/adr"],
             ),
             ("docs/server/notes.md", &["docs/server/adr", "docs/adr"]),
-            ("src/docs/a.md", &["docs/adr"]),
+            ("src/docs/a.md", &["src/docs/adr", "docs/adr"]),
+            // ADR 0011
+            (
+                "packages/server/README.md",
+                &["packages/server/docs/adr", "packages/docs/adr", "docs/adr"],
+            ),
+            (
+                "packages/server/docs/api/notes.md",
+                &[
+                    "packages/server/docs/api/adr",
+                    "packages/server/docs/adr",
+                    "packages/docs/adr",
+                    "docs/adr",
+                ],
+            ),
+            (
+                "packages/server/docs/adr/0002-b.md",
+                &["packages/server/docs/adr", "packages/docs/adr", "docs/adr"],
+            ),
         ];
         for (doc, expected) in cases {
             assert_eq!(candidate_dirs(doc), expected, "{doc}");
