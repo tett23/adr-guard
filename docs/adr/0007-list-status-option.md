@@ -1,6 +1,6 @@
 # ADR 0007: `list` にも `--status` オプションを加える
 
-ステータス: 採択
+ステータス: 採択→ステータスの値の取り出しは[ADR 0012](0012-status-line-and-status-adt.md)
 
 ## 文脈
 

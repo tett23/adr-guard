@@ -60,3 +60,6 @@ jobs:
       # docs/adr/0009
       - name: Check links in ADR references
         run: cargo run --quiet -- links
+      # docs/adr/0012
+      - name: Check status lines of ADRs
+        run: cargo run --quiet -- check-status
