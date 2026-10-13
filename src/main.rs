@@ -1,8 +1,8 @@
-//! コミット済みのADR（docs/adr/、docs/<モジュール>/adr/）を、ステータスの行を除いて変更できないようにするガード。
+//! コミット済みのADR（docs/adr/、docs/<モジュール>/adr/）を変更できないようにするガード。ステータスの行とリンクの変更はオプションで許可する（ADR 0010）。
 //!
-//! - `adr-guard pre-commit [--allow-links]`: gitのpre-commit hookとして、ステージされた変更を検査する。
-//! - `adr-guard claude-hook`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
-//! - `adr-guard check-range [--allow-links] <base> <head>`: CIで、範囲内の各コミットを検査する。
+//! - `adr-guard pre-commit [--allow-status] [--allow-links]`: gitのpre-commit hookとして、ステージされた変更を検査する。
+//! - `adr-guard claude-hook [--allow-status]`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
+//! - `adr-guard check-range [--allow-status] [--allow-links] <base> <head>`: CIで、範囲内の各コミットを検査する。
 //! - `adr-guard list [--status]`、`adr-guard proposed [--status]`: ADRと、ステータスが提案のADRを一覧する（ADR 0005、0006、0007）。
 //! - `adr-guard links [--fix [--include-committed]]`: リンクの無いADRの参照を検査・修正する（ADR 0009）。
 //! - `adr-guard --version`、`adr-guard --help`: バージョンとヘルプを表示する（ADR 0003、0009）。
@@ -23,9 +23,10 @@ const ALLOW_TRAILER: &str = "ADR-Guard-Allow";
 const ALLOW_ENV: &str = "ADR_GUARD_ALLOW";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
 const LINKS_ADVICE: &str = "adr-guard links --fix で修正できます。コミット済みのADRは --fix --include-committed で修正し、検査に --allow-links を付けてコミットしてください。";
-const USAGE: &str = "usage: adr-guard <pre-commit [--allow-links]|claude-hook|check-range [--allow-links] <base> <head>|list [--status]|proposed [--status]|links [--fix [--include-committed]]|--version|--help>";
+const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] <base> <head>|list [--status]|proposed [--status]|links [--fix [--include-committed]]|--version|--help>";
 const HELP: &str = "\
-コミット済みのADR（Architecture Decision Record）を、ステータスの行を除いて変更できないようにするツール。
+コミット済みのADR（Architecture Decision Record）を変更できないようにするツール。
+ステータスの行の変更（--allow-status）と、ADRの参照のリンクだけの変更（--allow-links）は、オプションで許可できる。
 gitのpre-commit hook、Claude CodeのPreToolUse hook、CI（GitHub Actions）の3か所で検査する。
 
 ADRとステータス:
@@ -38,7 +39,9 @@ ADRとステータス:
     却下、破棄                         採択されなかった、取りやめた
 
 規則:
-  - コミット済みのADRは、ステータスの行以外を変更できない。削除・移動（リネーム）もできない。
+  - コミット済みのADRは変更できない。削除・移動（リネーム）もできない。
+    ただし、検査に --allow-status を付けるとステータスの行の変更を、--allow-links を付けると
+    ADRの参照のリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
   - 新しいADRの追加と、未コミットのADRの編集は自由にできる。
   - 仕様を変える場合は、元のADRを書きかえずに、新しいADRを作成する。
   - 文書（.md）の中のADRの参照（ADR 0001 の形）には、ADRのファイルへのリンクを付ける。
@@ -48,23 +51,25 @@ ADRとステータス:
     参照先のADRが見つからない番号は検査しない。
 
 サブコマンド:
-  adr-guard pre-commit [--allow-links]
+  adr-guard pre-commit [--allow-status] [--allow-links]
     gitのpre-commit hookから呼ぶ。ステージされた変更を検査する。
-      - コミット済みのADRの、ステータスの行以外の変更・削除・移動を拒否する。
+      - コミット済みのADRの変更（オプションで許可したものを除く）・削除・移動を拒否する。
       - ステージされた .md のファイルの、リンクの無いADRの参照を拒否する。
-    --allow-links  コミット済みのADRで、ADRの参照のリンクだけが異なる変更（リンクを付ける・外す・
-                   リンク先を変える）を許可する。
+    --allow-status  コミット済みのADRで、ステータスの行の変更を許可する。
+    --allow-links   コミット済みのADRで、ADRの参照のリンクだけが異なる変更（リンクを付ける・外す・
+                    リンク先を変える）を許可する。
     終了コード: 0 問題なし、1 違反あり
 
-  adr-guard claude-hook
+  adr-guard claude-hook [--allow-status]
     Claude CodeのPreToolUse hook（matcher: Write|Edit|MultiEdit）から呼ぶ。標準入力のJSONを読み、
-    コミット済みのADRのステータスの行以外を変える編集を拒否する。
+    コミット済みのADRを変える編集を拒否する。
+    --allow-status  ステータスの行だけを変える編集を許可する。
     終了コード: 0 許可、2 拒否（理由を標準エラーに表示）
 
-  adr-guard check-range <base> <head> [--allow-links]
+  adr-guard check-range <base> <head> [--allow-status] [--allow-links]
     CIから呼ぶ。<base>..<head> のマージ以外の各コミットを、親コミットとの差分で検査する。
     <base> がコミットとして存在しなければ（0000... など）、<head> から辿れるすべてのコミットを検査する。
-    --allow-links  pre-commit と同じ。
+    --allow-status, --allow-links  pre-commit と同じ。
     終了コード: 0 問題なし、1 違反あり
 
   adr-guard list [--status]
@@ -90,6 +95,7 @@ ADRとステータス:
   オプションは、サブコマンドの後ろならどの位置に置いてもよい。
 
 意図してADRを書きかえる場合:
+  --allow-status         ステータスの行の変更を許可する。hook、Claude Codeのhook、CIで常に付けてよい。
   --allow-links          ADRの参照にリンクを付けるだけの変更を許可する。hookとCIで常に付けてよい。
   ADR_GUARD_ALLOW=<理由>  環境変数。pre-commit で、ADRのどんな書きかえも許可する。
                          同じhookのほかの検査は迂回しない。リンクの検査は許可しない。
@@ -105,10 +111,14 @@ ADRとステータス:
 
 例:
   # .githooks/pre-commit（git config core.hooksPath .githooks）
-  exec adr-guard pre-commit --allow-links
+  exec adr-guard pre-commit --allow-status --allow-links
 
-  # CI（GitHub Actions）。actionを使う場合は uses: tett23/adr-guard@<タグ>
-  adr-guard check-range --allow-links \"$BASE_SHA\" \"$HEAD_SHA\"
+  # Claude Codeの .claude/settings.json の PreToolUse hook の command
+  adr-guard claude-hook --allow-status
+
+  # CI（GitHub Actions）。actionを使う場合は uses: tett23/adr-guard@<タグ> と
+  # with: の allow-status: true、allow-links: true
+  adr-guard check-range --allow-status --allow-links \"$BASE_SHA\" \"$HEAD_SHA\"
   adr-guard links
 
   # レビュー待ちのADRを開く
@@ -123,15 +133,26 @@ fn version() -> String {
     format!("adr-guard {}", env!("CARGO_PKG_VERSION"))
 }
 
+/// コミット済みのADRで許可する変更（ADR 0009、0010）。
+#[derive(Clone, Copy)]
+struct Allow {
+    /// ステータスの行の変更（`--allow-status`）
+    status: bool,
+    /// ADRの参照のリンクだけの変更（`--allow-links`）
+    links: bool,
+}
+
 enum Subcommand<'a> {
     PreCommit {
-        allow_links: bool,
+        allow: Allow,
     },
-    ClaudeHook,
+    ClaudeHook {
+        allow: Allow,
+    },
     CheckRange {
         base: &'a str,
         head: &'a str,
-        allow_links: bool,
+        allow: Allow,
     },
     List {
         status: bool,
@@ -155,7 +176,8 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
         .map(String::as_str)
         .partition(|arg| arg.starts_with("--"));
     let accepted: &[&str] = match command.as_str() {
-        "pre-commit" | "check-range" => &["--allow-links"],
+        "pre-commit" | "check-range" => &["--allow-status", "--allow-links"],
+        "claude-hook" => &["--allow-status"],
         "list" | "proposed" => &["--status"],
         "links" => &["--fix", "--include-committed"],
         _ => &[],
@@ -165,16 +187,14 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
         return None;
     }
     let has = |option: &str| unique.contains(option);
+    let allow = Allow {
+        status: has("--allow-status"),
+        links: has("--allow-links"),
+    };
     match (command.as_str(), positional.as_slice()) {
-        ("pre-commit", []) => Some(Subcommand::PreCommit {
-            allow_links: has("--allow-links"),
-        }),
-        ("claude-hook", []) => Some(Subcommand::ClaudeHook),
-        ("check-range", [base, head]) => Some(Subcommand::CheckRange {
-            base,
-            head,
-            allow_links: has("--allow-links"),
-        }),
+        ("pre-commit", []) => Some(Subcommand::PreCommit { allow }),
+        ("claude-hook", []) => Some(Subcommand::ClaudeHook { allow }),
+        ("check-range", [base, head]) => Some(Subcommand::CheckRange { base, head, allow }),
         ("list", []) => Some(Subcommand::List {
             status: has("--status"),
         }),
@@ -194,13 +214,9 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match parse_args(&args) {
-        Some(Subcommand::PreCommit { allow_links }) => pre_commit(allow_links),
-        Some(Subcommand::ClaudeHook) => claude_hook(),
-        Some(Subcommand::CheckRange {
-            base,
-            head,
-            allow_links,
-        }) => check_range(base, head, allow_links),
+        Some(Subcommand::PreCommit { allow }) => pre_commit(allow),
+        Some(Subcommand::ClaudeHook { allow }) => claude_hook(allow),
+        Some(Subcommand::CheckRange { base, head, allow }) => check_range(base, head, allow),
         Some(Subcommand::List { status }) => list(status),
         Some(Subcommand::Proposed { status }) => proposed(status),
         Some(Subcommand::Links {
@@ -255,17 +271,38 @@ fn normalize(content: &[u8]) -> Vec<u8> {
     out
 }
 
+#[cfg(test)]
 fn only_status_changed(before: &[u8], after: &[u8]) -> bool {
     normalize(before) == normalize(after)
 }
 
-/// 変更が許可されるか。`allow_links` なら、ADRの参照のリンクだけの違いも許可する（ADR 0009）。
-fn allowed_change(before: &[u8], after: &[u8], allow_links: bool) -> bool {
-    if !allow_links {
-        return only_status_changed(before, after);
+/// 変更が許可されるか。`allow.status` ならステータスの行の違いを、`allow.links` ならADRの参照の
+/// リンクだけの違いを許可する。どちらも無ければ、前後がまったく同じときだけ許可する（ADR 0009、0010）。
+fn allowed_change(before: &[u8], after: &[u8], allow: Allow) -> bool {
+    let prepare = |content: &[u8]| {
+        let content = if allow.links {
+            links::unlink(&String::from_utf8_lossy(content)).into_bytes()
+        } else {
+            content.to_vec()
+        };
+        if allow.status {
+            normalize(&content)
+        } else {
+            content
+        }
+    };
+    prepare(before) == prepare(after)
+}
+
+/// コミット済みのADRを許可されない形で変更したときのメッセージ。
+fn change_violation(path: &str, allow: Allow) -> String {
+    if allow.status {
+        format!("コミット済みのADRはステータスの行以外を変更できません: {path}")
+    } else {
+        format!(
+            "コミット済みのADRは変更できません（ステータスの行の変更は --allow-status で許可できます）: {path}"
+        )
     }
-    let unlink = |content: &[u8]| links::unlink(&String::from_utf8_lossy(content)).into_bytes();
-    only_status_changed(&unlink(before), &unlink(after))
 }
 
 fn git(args: &[&str], cwd: &Path) -> Option<Vec<u8>> {
@@ -282,13 +319,7 @@ fn git(args: &[&str], cwd: &Path) -> Option<Vec<u8>> {
 ///
 /// * `old_ref` - 変更前の内容を `git show <old_ref>:<path>` で読むための参照（`HEAD` やコミット）
 /// * `new_ref` - 変更後の内容を `git show <new_ref>:<path>` で読むための参照（インデックスなら空文字）
-fn violations(
-    diff: &[u8],
-    old_ref: &str,
-    new_ref: &str,
-    allow_links: bool,
-    cwd: &Path,
-) -> Vec<String> {
+fn violations(diff: &[u8], old_ref: &str, new_ref: &str, allow: Allow, cwd: &Path) -> Vec<String> {
     let fields: Vec<String> = diff
         .split(|&b| b == 0)
         .filter(|f| !f.is_empty())
@@ -306,10 +337,8 @@ fn violations(
             "M" => {
                 let old = git(&["show", &format!("{old_ref}:{path}")], cwd).unwrap_or_default();
                 let new = git(&["show", &format!("{new_ref}:{path}")], cwd).unwrap_or_default();
-                if !allowed_change(&old, &new, allow_links) {
-                    violations.push(format!(
-                        "コミット済みのADRはステータスの行以外を変更できません: {path}"
-                    ));
+                if !allowed_change(&old, &new, allow) {
+                    violations.push(change_violation(path, allow));
                 }
             }
             _ => violations.push(format!("コミット済みのADRは削除・移動できません: {path}")),
@@ -318,9 +347,9 @@ fn violations(
     violations
 }
 
-fn pre_commit(allow_links: bool) -> ExitCode {
+fn pre_commit(allow: Allow) -> ExitCode {
     let cwd = Path::new(".");
-    let adr_violations = adr_violations_in_index(allow_links, cwd);
+    let adr_violations = adr_violations_in_index(allow, cwd);
     let link_findings = unlinked_in_index(cwd);
     let (Some(adr_violations), Some(link_findings)) = (adr_violations, link_findings) else {
         eprintln!("pre-commit: ステージされた変更を取得できませんでした");
@@ -358,7 +387,7 @@ fn pre_commit(allow_links: bool) -> ExitCode {
 }
 
 /// HEADとインデックスの差分のうち、ADRの規則に違反する変更。HEADが無ければ（初回コミット）空。
-fn adr_violations_in_index(allow_links: bool, cwd: &Path) -> Option<Vec<String>> {
+fn adr_violations_in_index(allow: Allow, cwd: &Path) -> Option<Vec<String>> {
     if git(&["rev-parse", "--verify", "-q", "HEAD"], cwd).is_none() {
         return Some(Vec::new());
     }
@@ -373,7 +402,7 @@ fn adr_violations_in_index(allow_links: bool, cwd: &Path) -> Option<Vec<String>>
         ],
         cwd,
     )?;
-    Some(violations(&diff, "HEAD", "", allow_links, cwd))
+    Some(violations(&diff, "HEAD", "", allow, cwd))
 }
 
 /// ステージされた追加・変更の .md のファイルの、インデックスの内容にあるリンクの無い参照（ADR 0009）。
@@ -421,7 +450,7 @@ fn allow_reason(commit: &str, cwd: &Path) -> Option<String> {
 
 /// `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。
 /// `<base>` がコミットとして存在しなければ（ブランチの新規作成など）、ルートコミットから検査する。
-fn check_range(base: &str, head: &str, allow_links: bool) -> ExitCode {
+fn check_range(base: &str, head: &str, allow: Allow) -> ExitCode {
     let cwd = Path::new(".");
     let base_exists = git(
         &["rev-parse", "--verify", "-q", &format!("{base}^{{commit}}")],
@@ -461,7 +490,7 @@ fn check_range(base: &str, head: &str, allow_links: bool) -> ExitCode {
             continue;
         };
         let short = &commit[..commit.len().min(12)];
-        let violations = violations(&diff, &parent, commit, allow_links, cwd);
+        let violations = violations(&diff, &parent, commit, allow, cwd);
         if violations.is_empty() {
             continue;
         }
@@ -707,7 +736,7 @@ fn simulate(tool: &str, input: &Value, current: &str) -> Option<String> {
     }
 }
 
-fn claude_hook() -> ExitCode {
+fn claude_hook(allow: Allow) -> ExitCode {
     let mut stdin = String::new();
     if std::io::stdin().read_to_string(&mut stdin).is_err() {
         return ExitCode::SUCCESS;
@@ -747,11 +776,9 @@ fn claude_hook() -> ExitCode {
 
     let current = std::fs::read_to_string(&abs_path).unwrap_or_default();
     match simulate(tool, input, &current) {
-        Some(updated) if only_status_changed(&committed, updated.as_bytes()) => ExitCode::SUCCESS,
+        Some(updated) if allowed_change(&committed, updated.as_bytes(), allow) => ExitCode::SUCCESS,
         _ => {
-            eprintln!(
-                "コミット済みのADRはステータスの行以外を変更できません: {rel_path}\n{ADVICE}"
-            );
+            eprintln!("{}\n{ADVICE}", change_violation(&rel_path, allow));
             ExitCode::from(2)
         }
     }
@@ -849,6 +876,44 @@ mod tests {
         assert!(!only_status_changed(b"a\n", b"a"));
     }
 
+    const NONE: Allow = Allow {
+        status: false,
+        links: false,
+    };
+    const STATUS: Allow = Allow {
+        status: true,
+        links: false,
+    };
+    const LINKS: Allow = Allow {
+        status: false,
+        links: true,
+    };
+    const BOTH: Allow = Allow {
+        status: true,
+        links: true,
+    };
+
+    #[test]
+    fn allowed_changes_by_option() {
+        let before = "ステータス: 提案\n\nADR 0001 本文\n";
+        let status = "ステータス: 採択\n\nADR 0001 本文\n";
+        let link = "ステータス: 提案\n\n[ADR 0001](0001-a.md) 本文\n";
+        let both = "ステータス: 採択\n\n[ADR 0001](0001-a.md) 本文\n";
+        let body = "ステータス: 採択\n\n[ADR 0001](0001-a.md) 改変\n";
+        let cases = [
+            (before, [true, true, true, true]),
+            (status, [false, true, false, true]),
+            (link, [false, false, true, true]),
+            (both, [false, false, false, true]),
+            (body, [false, false, false, false]),
+        ];
+        for (after, expected) in cases {
+            let actual = [NONE, STATUS, LINKS, BOTH]
+                .map(|allow| allowed_change(before.as_bytes(), after.as_bytes(), allow));
+            assert_eq!(actual, expected, "{after}");
+        }
+    }
+
     #[test]
     fn link_only_changes() {
         let plain = "ステータス: 採択\n\nADR 0001 と ADR 0005、0006\n";
@@ -858,11 +923,11 @@ mod tests {
             "ステータス: 採択→ADR 0002\n\n[ADR 0001](0001-a.md) と ADR 0005、0006\n",
         ] {
             assert!(
-                allowed_change(plain.as_bytes(), after.as_bytes(), true),
+                allowed_change(plain.as_bytes(), after.as_bytes(), BOTH),
                 "{after}"
             );
             assert!(
-                !allowed_change(plain.as_bytes(), after.as_bytes(), false),
+                !allowed_change(plain.as_bytes(), after.as_bytes(), STATUS),
                 "{after}"
             );
         }
@@ -870,11 +935,11 @@ mod tests {
         let linked = "[ADR 0001](0001-a.md)\n";
         for after in ["ADR 0001\n", "[ADR 0001](../adr/0001-a.md)\n"] {
             assert!(
-                allowed_change(linked.as_bytes(), after.as_bytes(), true),
+                allowed_change(linked.as_bytes(), after.as_bytes(), BOTH),
                 "{after}"
             );
             assert!(
-                !allowed_change(linked.as_bytes(), after.as_bytes(), false),
+                !allowed_change(linked.as_bytes(), after.as_bytes(), STATUS),
                 "{after}"
             );
         }
@@ -889,7 +954,7 @@ mod tests {
             "[ADR 0001](0001-a.md) 改変\n",
         ] {
             assert!(
-                !allowed_change(before.as_bytes(), after.as_bytes(), true),
+                !allowed_change(before.as_bytes(), after.as_bytes(), BOTH),
                 "{after}"
             );
         }

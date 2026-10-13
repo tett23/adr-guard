@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/tett23/adr-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/tett23/adr-guard/actions/workflows/ci.yml)
 
-コミット済みのADR（`docs/adr/`、モノレポでは `docs/<モジュール>/adr/` も）を、ステータスの行（`ステータス:` で始まる行）を除いて変更できないようにするツール。
+コミット済みのADR（`docs/adr/`、モノレポでは `docs/<モジュール>/adr/` も）を変更できないようにするツール。ステータスの行（`ステータス:` で始まる行）の変更と、ADRの参照のリンクだけの変更は、オプションで許可する。
 
 ADRは決定の記録であり、あとから書きかえると経緯が失われる。
 仕様を変える場合は、元のADRを書きかえずに新しいADRを作成する。
@@ -12,7 +12,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 
 - 対象は `docs/adr/` と `docs/<モジュール>/adr/`（例：`docs/server/adr/`）以下のファイル。モジュールは1段だけで、`docs/a/b/adr/` は対象外。
 - 設定は不要。モノレポでモジュールごとにADRを分けても、導入の手順は変わらない。
-- コミット済みのADRは、`ステータス:` で始まる行以外を変更できない。
+- コミット済みのADRは変更できない。ただし、検査に `--allow-status` を付けると `ステータス:` で始まる行の変更を、`--allow-links` を付けるとADRの参照のリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
 - コミット済みのADRは、削除・リネームできない。
 - 新しいADRの追加と、未コミットのADRの編集は自由にできる。
 - `docs/adr/` から `docs/<モジュール>/adr/` への移動も、コミット済みのADRの移動として拒否する。移す場合は、新しい場所に新しいADRを作成する。
@@ -22,15 +22,16 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 
 | サブコマンド | 用途 |
 |---|---|
-| `adr-guard pre-commit [--allow-links]` | gitのpre-commit hookとして、ステージされた変更を検査する。ステージされた `.md` のリンクの無いADRの参照も拒否する |
-| `adr-guard claude-hook` | Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditによるコミット済みADRの変更を拒否する |
-| `adr-guard check-range <base> <head> [--allow-links]` | `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。`<base>` が無いコミットならルートコミットから検査する |
+| `adr-guard pre-commit [--allow-status] [--allow-links]` | gitのpre-commit hookとして、ステージされた変更を検査する。ステージされた `.md` のリンクの無いADRの参照も拒否する |
+| `adr-guard claude-hook [--allow-status]` | Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditによるコミット済みADRの変更を拒否する |
+| `adr-guard check-range <base> <head> [--allow-status] [--allow-links]` | `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。`<base>` が無いコミットならルートコミットから検査する |
 | `adr-guard list [--status]` | 作業ツリーにあるADR（未コミットのものも含む）のパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する（ステータスの行が無ければステータスは空） |
 | `adr-guard proposed [--status]` | ステータスが提案のADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
 | `adr-guard links [--fix [--include-committed]]` | 作業ツリーの `.md` にある、リンクの無いADRの参照を報告する。`--fix` でリンクに置きかえる（コミット済みのADRは `--include-committed` を付けたときだけ） |
 | `adr-guard --version`、`-V` | バージョンを表示する |
 | `adr-guard --help`、`-h` | ヘルプを表示する。AIがヘルプだけで使い方を把握できるよう、規則、各サブコマンドの出力の形と終了コード、例まで載せている |
 
+- `--allow-status`：コミット済みのADRで、ステータスの行の変更を許可する（`pre-commit`、`claude-hook`、`check-range`）。付けないと、ステータスの行も変更できない。
 - `--allow-links`：コミット済みのADRで、ADRの参照のリンクだけが異なる変更（リンクを付ける・外す・リンク先を変える）を許可する。
 - オプションは、サブコマンドの後ろならどの位置に置いてもよい。
 
@@ -83,7 +84,7 @@ cargo install --git https://github.com/tett23/adr-guard --tag v0.4.0
 
 ```sh
 #!/bin/sh
-exec adr-guard pre-commit --allow-links
+exec adr-guard pre-commit --allow-status --allow-links
 ```
 
 ```sh
@@ -103,7 +104,7 @@ git config core.hooksPath .githooks
     "PreToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
-        "hooks": [{ "type": "command", "command": "adr-guard claude-hook" }]
+        "hooks": [{ "type": "command", "command": "adr-guard claude-hook --allow-status" }]
       }
     ]
   }
@@ -128,12 +129,20 @@ jobs:
         with:
           base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           head: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          allow-status: true
+          allow-links: true
 ```
 
 - 範囲内の全コミットを読むため、`fetch-depth: 0` でチェックアウトする。
 - `check-range` の後に、チェックアウトした作業ツリーで `adr-guard links` を実行する。入力 `links: false` で止められる。
-- 入力 `allow-links: true` で `check-range` に `--allow-links` を付ける。
+- 入力 `allow-status: true`、`allow-links: true` で、`check-range` に `--allow-status`、`--allow-links` を付ける。どちらも既定は `false`。
 - actionはタグかコミットのSHAで指定する。使う adr-guard のバージョンは、actionの `Cargo.toml` のバージョンになる。`version` 入力（例：`v0.4.0`）で変えられる。
+
+### v0.5.0 に上げる場合
+
+v0.5.0 から、ステータスの行の変更も `--allow-status` を付けたときだけ許可する（[ADR 0010](docs/adr/0010-allow-status-option.md)）。
+v0.4.0 以前から上げる場合は、pre-commit hook、Claude Codeのhook（`~/.claude/settings.json` を含む）、actionのすべてに `--allow-status`（actionは `allow-status: true`）を付ける。
+付けないと、ADRの採択などでステータスの行を変えられなくなる。
 
 ### 注意
 
@@ -143,7 +152,7 @@ jobs:
 
 ### 既存のリポジトリでリンクの検査を導入する
 
-1. pre-commit hookを `exec adr-guard pre-commit --allow-links` にし、actionに `allow-links: true` を付ける。移行が済むまではactionに `links: false` を付けてもよい。
+1. pre-commit hookを `exec adr-guard pre-commit --allow-status --allow-links` にし、actionに `allow-status: true` と `allow-links: true` を付ける。移行が済むまではactionに `links: false` を付けてもよい。
 2. `adr-guard links --fix --include-committed` で、コミット済みのADRも含めて参照をリンクにする。
 3. 書きかえをほかの変更と分けて1つのコミットにする。`--allow-links` により、トレーラーは要らない。
 4. `adr-guard links` が終了コード0で終わることを確かめ、actionの `links: false` を外す。
