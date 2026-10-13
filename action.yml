@@ -12,6 +12,14 @@ inputs:
     description: 使う adr-guard のリリースのタグ（例：v0.1.0）。省略すると、このactionと同じバージョン
     required: false
     default: ""
+  allow-links:
+    description: true なら、コミット済みのADRでADRの参照のリンクだけが異なる変更を許可する（check-range --allow-links）
+    required: false
+    default: "false"
+  links:
+    description: true なら、check-range の後に adr-guard links でリンクの無いADRの参照を検査する。既存の文書の移行が済むまで false にできる
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -21,6 +29,8 @@ runs:
         BASE_SHA: ${{ inputs.base }}
         HEAD_SHA: ${{ inputs.head }}
         VERSION: ${{ inputs.version }}
+        ALLOW_LINKS: ${{ inputs.allow-links }}
+        LINKS: ${{ inputs.links }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
@@ -41,4 +51,13 @@ runs:
           grep -F " $archive" SHA256SUMS | sha256sum -c -
           tar -xzf "$archive"
         )
-        "$dir/${archive%.tar.gz}/adr-guard" check-range "$BASE_SHA" "$HEAD_SHA"
+        bin="$dir/${archive%.tar.gz}/adr-guard"
+        # docs/adr/0009
+        allow_links=()
+        if [ "$ALLOW_LINKS" = "true" ]; then
+          allow_links=(--allow-links)
+        fi
+        "$bin" check-range "${allow_links[@]}" "$BASE_SHA" "$HEAD_SHA"
+        if [ "$LINKS" = "true" ]; then
+          "$bin" links
+        fi
