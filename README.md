@@ -12,6 +12,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 
 - 対象は `docs/adr/` と `docs/<モジュール>/adr/`（例：`docs/server/adr/`）以下のファイル。どの深さにあってもよく、`packages/server/docs/adr/` や `apps/web/docs/api/adr/` も対象になる（[ADR 0011](docs/adr/0011-nested-adr-directories.md)）。モジュールは1段だけで、`docs/a/b/adr/` は対象外。
 - 設定は不要。モノレポでモジュールごとにADRを分けても、導入の手順は変わらない。
+- 監査や計測の記録（`docs/audit/` と `docs/benchmarks/` 以下のすべてのファイル。どの深さの `docs/` でも、`docs/<モジュール>/` でもよい）も、コミット済みのものは変更・削除・移動できない（[ADR 0013](docs/adr/0013-protect-audit-and-benchmark-records.md)）。`--allow-status` と `--allow-links` は記録には効かない。記録を直す場合は、新しい記録を作成する。
 - ADRは、行頭が `ステータス:` か `Status:` のステータスの行をちょうど1つ持つ（[ADR 0012](docs/adr/0012-status-line-and-status-adt.md)）。`- Status:` や `status:` は認めない。ステータスの行が無い、または2つ以上あるADRは違反になる。
 - ステータスの値は、`提案`／`Proposed`、`採択`／`Accepted`、`採択→…`／`Superseded by …`、`却下`／`Rejected`、`破棄`／`Discarded`、`廃止`／`Deprecated` として解釈する。どれにも当たらない値も違反にはしない。
 - コミット済みのADRは変更できない。ただし、検査に `--allow-status` を付けるとステータスの行の変更を、`--allow-links` を付けるとADRの参照のリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
@@ -171,9 +172,10 @@ v0.7.0 から、ステータスの行が無いADRと、2つ以上あるADRは、
 3. 書きかえをほかの変更と分けて1つのコミットにする。`--allow-links` により、トレーラーは要らない。
 4. `adr-guard links` が終了コード0で終わることを確かめ、actionの `links: false` を外す。
 
-### 意図してADRを書きかえる場合
+### 意図してADRや記録を書きかえる場合
 
 ADRの参照にリンクを付けるだけなら、上の `--allow-links` を使う。
+記録（`docs/audit/`、`docs/benchmarks/`）には例外が無いため、誤記を直す場合なども次の手段が要る。`adr-guard links --fix --include-committed` でコミット済みの記録のリンクを直した場合も同じ。
 次の手段は、それ以外の書きかえのための緊急用であり、通常は使わない。
 
 書式の修正など、人間が判断したうえでコミット済みのADRを書きかえる場合は、書きかえをほかの変更と分けて1つのコミットにし、次の2つを行う。

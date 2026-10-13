@@ -1461,3 +1461,180 @@ mod status_lines {
         }
     }
 }
+
+mod records {
+    use super::*;
+    use serde_json::json;
+
+    const AUDIT: &str = "docs/audit/2026-10-07.md";
+    const BENCHMARK: &str = "docs/benchmarks/v0.1.0.json";
+
+    /// `repo()` に、監査と計測の記録をコミットした一時リポジトリ（ADR 0013）。
+    fn records_repo() -> TempDir {
+        let dir = repo();
+        let p = dir.path();
+        write(p, AUDIT, "# 監査\n\n結果\n");
+        write(p, BENCHMARK, "{\"ms\": 10}\n");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-qm", "records"]);
+        dir
+    }
+
+    fn run(dir: &Path, args: &[&str], allow: Option<&str>) -> (i32, String) {
+        let mut command = Command::new(BIN);
+        command
+            .args(args)
+            .current_dir(dir)
+            .env_remove("ADR_GUARD_ALLOW");
+        if let Some(value) = allow {
+            command.env("ADR_GUARD_ALLOW", value);
+        }
+        let output = command.output().unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    }
+
+    fn head(dir: &Path) -> String {
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    const PRE_COMMIT: [&str; 3] = ["pre-commit", "--allow-status", "--allow-links"];
+
+    #[test]
+    fn pre_commit_rejects_changing_records() {
+        for path in [AUDIT, BENCHMARK] {
+            let dir = records_repo();
+            let p = dir.path();
+            write(p, path, "changed\n");
+            git(p, &["add", "-A"]);
+            let (code, stderr) = run(p, &PRE_COMMIT, None);
+            assert_eq!(code, 1, "{path}");
+            assert!(stderr.contains("コミット済みの記録"), "{stderr}");
+            assert!(stderr.contains("新しい記録を作成してください"), "{stderr}");
+            assert_eq!(run(p, &PRE_COMMIT, Some("誤記の修正")).0, 0, "{path}");
+        }
+    }
+
+    #[test]
+    fn pre_commit_rejects_deleting_and_moving_records() {
+        for args in [
+            vec!["rm", "-q", AUDIT],
+            vec!["mv", AUDIT, "docs/audit/moved.md"],
+        ] {
+            let dir = records_repo();
+            git(dir.path(), &args);
+            let (code, stderr) = run(dir.path(), &PRE_COMMIT, None);
+            assert_eq!(code, 1, "{args:?}");
+            assert!(stderr.contains("削除・移動できません"), "{stderr}");
+        }
+    }
+
+    #[test]
+    fn pre_commit_allows_new_records() {
+        let dir = records_repo();
+        write(dir.path(), "docs/audit/2026-10-08.md", "# 監査\n");
+        git(dir.path(), &["add", "-A"]);
+        assert_eq!(run(dir.path(), &PRE_COMMIT, None).0, 0);
+    }
+
+    #[test]
+    fn check_range_allows_records_only_with_trailer() {
+        let dir = records_repo();
+        let p = dir.path();
+        let base = head(p);
+        write(p, AUDIT, "changed\n");
+        git(p, &["add", "-A"]);
+        git(p, &["commit", "-q", "--no-verify", "-m", "change"]);
+        let changed = head(p);
+        let args = [
+            "check-range",
+            "--allow-status",
+            "--allow-links",
+            &base,
+            &changed,
+        ];
+        assert_eq!(run(p, &args, None).0, 1);
+
+        git(
+            p,
+            &[
+                "commit",
+                "-q",
+                "--amend",
+                "--no-verify",
+                "-m",
+                "change\n\nADR-Guard-Allow: 誤記の修正",
+            ],
+        );
+        let allowed = head(p);
+        let args = [
+            "check-range",
+            "--allow-status",
+            "--allow-links",
+            &base,
+            &allowed,
+        ];
+        assert_eq!(run(p, &args, None).0, 0);
+    }
+
+    #[test]
+    fn claude_hook_rejects_editing_committed_records() {
+        let dir = records_repo();
+        let edit = |path: &str| {
+            json!({"tool_name": "Edit", "tool_input": {
+                "file_path": path, "old_string": "結果", "new_string": "改変",
+            }})
+        };
+        assert_eq!(claude_hook(dir.path(), edit(AUDIT)), 2);
+        write(dir.path(), "docs/audit/draft.md", "結果\n");
+        assert_eq!(claude_hook(dir.path(), edit("docs/audit/draft.md")), 0);
+    }
+
+    #[test]
+    fn links_fix_skips_committed_records_by_default() {
+        let dir = records_repo();
+        let p = dir.path();
+        write(p, AUDIT, "ADR 0001 を参照\n");
+        git(p, &["add", "-A"]);
+        git(p, &["commit", "-q", "--no-verify", "-m", "audit"]);
+
+        let (code, stderr) = run(p, &["links", "--fix"], None);
+        assert_eq!(code, 1);
+        assert!(stderr.contains("コミット済みの記録"), "{stderr}");
+        assert_eq!(
+            std::fs::read_to_string(p.join(AUDIT)).unwrap(),
+            "ADR 0001 を参照\n"
+        );
+
+        let (code, stderr) = run(p, &["links", "--fix", "--include-committed"], None);
+        assert_eq!(code, 0);
+        assert!(
+            stderr.contains("ADR-Guard-Allow のトレーラーが要ります"),
+            "{stderr}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(p.join(AUDIT)).unwrap(),
+            "[ADR 0001](../adr/0001-x.md) を参照\n"
+        );
+    }
+
+    #[test]
+    fn reports_record_and_adr_violations_together() {
+        let dir = records_repo();
+        let p = dir.path();
+        write(p, AUDIT, "changed\n");
+        write(p, ADR, &CONTENT.replace("本文", "改変"));
+        git(p, &["add", "-A"]);
+        let (code, stderr) = run(p, &PRE_COMMIT, None);
+        assert_eq!(code, 1);
+        assert!(stderr.contains(AUDIT), "{stderr}");
+        assert!(stderr.contains(ADR), "{stderr}");
+    }
+}

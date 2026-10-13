@@ -1,4 +1,5 @@
-//! コミット済みのADR（どの深さかの docs/adr/、docs/<モジュール>/adr/）を変更できないようにするガード。ステータスの行とリンクの変更はオプションで許可する（ADR 0010）。
+//! コミット済みのADR（どの深さかの docs/adr/、docs/<モジュール>/adr/）と記録（docs/audit/、docs/benchmarks/。ADR 0013）を
+//! 変更できないようにするガード。ADRのステータスの行とリンクの変更はオプションで許可する（ADR 0010）。
 //!
 //! - `adr-guard pre-commit [--allow-status] [--allow-links]`: gitのpre-commit hookとして、ステージされた変更を検査する。
 //! - `adr-guard claude-hook [--allow-status]`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
@@ -22,6 +23,7 @@ use serde_json::Value;
 const ALLOW_TRAILER: &str = "ADR-Guard-Allow";
 const ALLOW_ENV: &str = "ADR_GUARD_ALLOW";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
+const RECORD_ADVICE: &str = "記録を直す場合は、新しい記録を作成してください。";
 const LINKS_ADVICE: &str = "adr-guard links --fix で修正できます。コミット済みのADRは --fix --include-committed で修正し、検査に --allow-links を付けてコミットしてください。";
 const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] <base> <head>|list [--status]|proposed [--status]|links [--fix [--include-committed]]|check-status|--version|--help>";
 const HELP: &str = "\
@@ -51,6 +53,9 @@ ADRとステータス:
     ADRの参照のリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
   - 新しいADRの追加と、未コミットのADRの編集は自由にできる。
   - 仕様を変える場合は、元のADRを書きかえずに、新しいADRを作成する。
+  - 監査や計測の記録（docs/audit/、docs/benchmarks/ 以下のすべてのファイル。ADRと同じく、どの深さの docs/ でも
+    docs/<モジュール>/ でもよい）も、コミット済みのものは変更・削除・移動できない。--allow-status と
+    --allow-links は記録には効かない。記録を直す場合は、新しい記録を作成する。新しい記録の追加は自由。
   - 文書（.md）の中のADRの参照（ADR 0001 の形）には、ADRのファイルへのリンクを付ける。
     例: [ADR 0001](docs/adr/0001-xxx.md)、続く番号は [ADR 0005](...)、[0006](...)
     インラインのコード、コードブロック、リンクのテキストの中と、ADR自身の番号は対象外。
@@ -109,13 +114,13 @@ ADRとステータス:
 
   オプションは、サブコマンドの後ろならどの位置に置いてもよい。
 
-意図してADRを書きかえる場合:
+意図してADRや記録を書きかえる場合:
   --allow-status         ステータスの行の変更を許可する。hook、Claude Codeのhook、CIで常に付けてよい。
   --allow-links          ADRの参照にリンクを付けるだけの変更を許可する。hookとCIで常に付けてよい。
-  ADR_GUARD_ALLOW=<理由>  環境変数。pre-commit で、ADRのどんな書きかえも許可する。
+  ADR_GUARD_ALLOW=<理由>  環境変数。pre-commit で、ADRと記録のどんな書きかえも許可する。
                          同じhookのほかの検査は迂回しない。リンクの検査は許可しない。
   ADR-Guard-Allow: <理由>  コミットメッセージの最後の段落（トレーラー）。check-range で、そのコミットの
-                         ADRのどんな書きかえも許可する。緊急用であり、通常は使わない。
+                         ADRと記録のどんな書きかえも許可する。緊急用であり、通常は使わない。
   ADR_GUARD_ALLOW とトレーラーは、書きかえをほかの変更と分けた1つのコミットに付ける。
 
 終了コード:
@@ -257,18 +262,29 @@ fn main() -> ExitCode {
     }
 }
 
-/// リポジトリのルートからの相対パスが、どの深さかの `docs/adr/` か `docs/<モジュール>/adr/` 以下にあるか
-/// （ADR 0002、0011）。`docs` より前の要素（`packages/server/` など）は空でなければ名前を問わない。
-fn is_adr_path(path: &str) -> bool {
+/// リポジトリのルートからの相対パスが、どの深さかの `docs/<名前>/` か `docs/<モジュール>/<名前>/` 以下に
+/// あるか（`<名前>` は `names` のどれか）。`docs` より前の要素（`packages/server/` など）は空でなければ
+/// 名前を問わない（ADR 0002、0011、0013）。
+fn is_under_docs(path: &str, names: &[&str]) -> bool {
     let parts: Vec<&str> = path.split('/').collect();
     (0..parts.len()).any(|start| {
         parts[..start].iter().all(|part| !part.is_empty())
             && match &parts[start..] {
-                ["docs", "adr", _, ..] => true,
-                ["docs", module, "adr", _, ..] => !module.is_empty(),
+                ["docs", name, _, ..] if names.contains(name) => true,
+                ["docs", module, name, _, ..] => !module.is_empty() && names.contains(name),
                 _ => false,
             }
     })
+}
+
+/// ADRのパスか（ADR 0002、0011）。
+fn is_adr_path(path: &str) -> bool {
+    is_under_docs(path, &["adr"])
+}
+
+/// 監査や計測の記録（`docs/audit/`、`docs/benchmarks/`）のパスか（ADR 0013）。
+fn is_record_path(path: &str) -> bool {
+    is_under_docs(path, &["audit", "benchmarks"])
 }
 
 /// ステータスの行（`ステータス:` と `Status:` で始まるすべての行）を取り除く（ADR 0010、0012）。
@@ -305,6 +321,22 @@ fn allowed_change(before: &[u8], after: &[u8], allow: Allow) -> bool {
     prepare(before) == prepare(after)
 }
 
+/// 保護しているファイルの規則の違反。
+struct Violation {
+    /// 記録（ADR 0013）の違反か
+    record: bool,
+    message: String,
+}
+
+/// 違反の一覧の後に表示する案内。記録の違反があれば、記録の案内も加える。
+fn advice(violations: &[Violation]) -> String {
+    if violations.iter().any(|violation| violation.record) {
+        format!("{ADVICE}\n{RECORD_ADVICE}")
+    } else {
+        ADVICE.to_owned()
+    }
+}
+
 /// コミット済みのADRを許可されない形で変更したときのメッセージ。
 fn change_violation(path: &str, allow: Allow) -> String {
     if allow.status {
@@ -316,6 +348,11 @@ fn change_violation(path: &str, allow: Allow) -> String {
     }
 }
 
+/// コミット済みの記録を変更したときのメッセージ（ADR 0013）。
+fn record_change_violation(path: &str) -> String {
+    format!("コミット済みの記録（docs/audit/、docs/benchmarks/）は変更できません: {path}")
+}
+
 fn git(args: &[&str], cwd: &Path) -> Option<Vec<u8>> {
     let output = Command::new("git")
         .args(args)
@@ -325,12 +362,18 @@ fn git(args: &[&str], cwd: &Path) -> Option<Vec<u8>> {
     output.status.success().then_some(output.stdout)
 }
 
-/// `git diff --name-status --no-renames -z` の出力から、ADRの規則に違反する変更を列挙する。
-/// ADR以外のパスは無視する。
+/// `git diff --name-status --no-renames -z` の出力から、ADRと記録の規則に違反する変更を列挙する。
+/// ADRと記録以外のパスは無視する。記録には `allow` の例外を設けない（ADR 0013）。
 ///
 /// * `old_ref` - 変更前の内容を `git show <old_ref>:<path>` で読むための参照（`HEAD` やコミット）
 /// * `new_ref` - 変更後の内容を `git show <new_ref>:<path>` で読むための参照（インデックスなら空文字）
-fn violations(diff: &[u8], old_ref: &str, new_ref: &str, allow: Allow, cwd: &Path) -> Vec<String> {
+fn violations(
+    diff: &[u8],
+    old_ref: &str,
+    new_ref: &str,
+    allow: Allow,
+    cwd: &Path,
+) -> Vec<Violation> {
     let fields: Vec<String> = diff
         .split(|&b| b == 0)
         .filter(|f| !f.is_empty())
@@ -340,19 +383,25 @@ fn violations(diff: &[u8], old_ref: &str, new_ref: &str, allow: Allow, cwd: &Pat
     let mut violations = Vec::new();
     for pair in fields.chunks(2) {
         let [status, path] = pair else { continue };
-        if !is_adr_path(path) {
+        let record = is_record_path(path);
+        if !is_adr_path(path) && !record {
             continue;
         }
-        match status.as_str() {
-            "A" => {}
-            "M" => {
+        let message = match (status.as_str(), record) {
+            ("A", _) => None,
+            ("M", false) => {
                 let old = git(&["show", &format!("{old_ref}:{path}")], cwd).unwrap_or_default();
                 let new = git(&["show", &format!("{new_ref}:{path}")], cwd).unwrap_or_default();
-                if !allowed_change(&old, &new, allow) {
-                    violations.push(change_violation(path, allow));
-                }
+                (!allowed_change(&old, &new, allow)).then(|| change_violation(path, allow))
             }
-            _ => violations.push(format!("コミット済みのADRは削除・移動できません: {path}")),
+            ("M", true) => Some(record_change_violation(path)),
+            (_, false) => Some(format!("コミット済みのADRは削除・移動できません: {path}")),
+            (_, true) => Some(format!(
+                "コミット済みの記録（docs/audit/、docs/benchmarks/）は削除・移動できません: {path}"
+            )),
+        };
+        if let Some(message) = message {
+            violations.push(Violation { record, message });
         }
     }
     violations
@@ -382,9 +431,9 @@ fn pre_commit(allow: Allow) -> ExitCode {
         }
         (None, false) => {
             for violation in &adr_violations {
-                eprintln!("pre-commit: {violation}");
+                eprintln!("pre-commit: {}", violation.message);
             }
-            eprintln!("{ADVICE}");
+            eprintln!("{}", advice(&adr_violations));
             true
         }
     };
@@ -404,7 +453,7 @@ fn pre_commit(allow: Allow) -> ExitCode {
 }
 
 /// HEADとインデックスの差分のうち、ADRの規則に違反する変更。HEADが無ければ（初回コミット）空。
-fn adr_violations_in_index(allow: Allow, cwd: &Path) -> Option<Vec<String>> {
+fn adr_violations_in_index(allow: Allow, cwd: &Path) -> Option<Vec<Violation>> {
     if git(&["rev-parse", "--verify", "-q", "HEAD"], cwd).is_none() {
         return Some(Vec::new());
     }
@@ -512,6 +561,7 @@ fn check_range(base: &str, head: &str, allow: Allow) -> ExitCode {
         return ExitCode::FAILURE;
     };
 
+    let mut failures: Vec<Violation> = Vec::new();
     let mut failed = false;
     for commit in String::from_utf8_lossy(&commits).lines() {
         let parent = format!("{commit}^");
@@ -544,13 +594,13 @@ fn check_range(base: &str, head: &str, allow: Allow) -> ExitCode {
             continue;
         }
         for violation in violations {
-            eprintln!("check-range: {short}: {violation}");
-            failed = true;
+            eprintln!("check-range: {short}: {}", violation.message);
+            failures.push(violation);
         }
     }
 
-    if failed {
-        eprintln!("{ADVICE}");
+    if failed || !failures.is_empty() {
+        eprintln!("{}", advice(&failures));
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
@@ -649,19 +699,25 @@ fn links(fix: bool, include_committed: bool) -> ExitCode {
         if findings.is_empty() {
             continue;
         }
-        let protected = is_adr_path(path) && committed.contains(path);
+        let record = is_record_path(path);
+        let protected = (is_adr_path(path) || record) && committed.contains(path);
         if fix && (!protected || include_committed) {
             if std::fs::write(root.join(path), fixed).is_err() {
                 eprintln!("links: 書きかえられませんでした: {path}");
                 return ExitCode::FAILURE;
             }
             eprintln!("{path}: {}件の参照をリンクにしました", findings.len());
+            if protected && record {
+                eprintln!(
+                    "{path}: コミット済みの記録です。コミットには {ALLOW_TRAILER} のトレーラーが要ります"
+                );
+            }
             continue;
         }
-        let note = if fix {
-            "（コミット済みのADR。--include-committed で修正できます）"
-        } else {
-            ""
+        let note = match (fix, record) {
+            (false, _) => "",
+            (true, false) => "（コミット済みのADR。--include-committed で修正できます）",
+            (true, true) => "（コミット済みの記録。--include-committed で修正できます）",
         };
         for finding in &findings {
             eprintln!(
@@ -836,23 +892,34 @@ fn claude_hook(allow: Allow) -> ExitCode {
         return ExitCode::SUCCESS;
     };
     let rel_path = rel_path.to_string_lossy();
-    if !is_adr_path(&rel_path) {
+    let record = is_record_path(&rel_path);
+    if !is_adr_path(&rel_path) && !record {
         return ExitCode::SUCCESS;
     }
 
     let Some(committed) = git(&["show", &format!("HEAD:{rel_path}")], &root) else {
-        // 未コミットのADRは自由に編集できる
+        // 未コミットのADRと記録は自由に編集できる
         return ExitCode::SUCCESS;
     };
 
     let current = std::fs::read_to_string(&abs_path).unwrap_or_default();
-    match simulate(tool, input, &current) {
-        Some(updated) if allowed_change(&committed, updated.as_bytes(), allow) => ExitCode::SUCCESS,
-        _ => {
-            eprintln!("{}\n{ADVICE}", change_violation(&rel_path, allow));
-            ExitCode::from(2)
-        }
+    let updated = simulate(tool, input, &current);
+    // 記録には例外を設けない（ADR 0013）
+    let allowed = match (&updated, record) {
+        (Some(updated), false) => allowed_change(&committed, updated.as_bytes(), allow),
+        (Some(updated), true) => committed == updated.as_bytes(),
+        (None, _) => false,
+    };
+    if allowed {
+        return ExitCode::SUCCESS;
     }
+    let (message, advice) = if record {
+        (record_change_violation(&rel_path), RECORD_ADVICE)
+    } else {
+        (change_violation(&rel_path, allow), ADVICE)
+    };
+    eprintln!("{message}\n{advice}");
+    ExitCode::from(2)
 }
 
 #[cfg(test)]
@@ -1045,6 +1112,51 @@ mod tests {
                 "{after}"
             );
         }
+    }
+
+    #[test]
+    fn record_paths() {
+        for path in [
+            "docs/audit/2026-10-07-best-practices.md",
+            "docs/benchmarks/v0.1.0.json",
+            "docs/benchmarks/graphs/latency.svg",
+            "docs/server/audit/2026-10-07.md",
+            "packages/server/docs/benchmarks/v1.csv",
+        ] {
+            assert!(is_record_path(path), "{path}");
+            assert!(!is_adr_path(path), "{path}");
+        }
+        for path in [
+            "docs/audits/a.md",
+            "docs/benchmark/a.md",
+            "docs/a/b/audit/a.md",
+            "benchmarks/a.json",
+            "packages/server/audit/a.md",
+            "docs/audit",
+            "docs/adr/0001-a.md",
+        ] {
+            assert!(!is_record_path(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn record_messages_differ_from_adr_messages() {
+        let record = record_change_violation("docs/audit/a.md");
+        let adr = change_violation(
+            "docs/adr/0001-a.md",
+            Allow {
+                status: true,
+                links: false,
+            },
+        );
+        assert!(record.contains("記録"), "{record}");
+        assert!(!adr.contains("記録"), "{adr}");
+        let violations = [Violation {
+            record: true,
+            message: record,
+        }];
+        assert!(advice(&violations).contains(RECORD_ADVICE));
+        assert!(!advice(&[]).contains(RECORD_ADVICE));
     }
 
     #[test]
