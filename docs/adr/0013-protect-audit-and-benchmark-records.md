@@ -1,6 +1,6 @@
 # ADR 0013: `docs/audit/` と `docs/benchmarks/` のコミット済みのファイルも変更できないようにする
 
-ステータス: 採択
+ステータス: 採択→記録のディレクトリの名前は[ADR 0014](0014-directory-name-variants.md)
 
 ## 文脈
 
