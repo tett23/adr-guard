@@ -288,11 +288,18 @@ pub fn link_texts(text: &str) -> String {
         .collect()
 }
 
+/// ADRのディレクトリの名前。この順に参照先を探す（ADR 0014）。
+pub const ADR_DIR_NAMES: [&str; 4] = ["adr", "adrs", "decisions", "decision"];
+
+/// 監査や計測の記録のディレクトリの名前（ADR 0013、0014）。
+pub const RECORD_DIR_NAMES: [&str; 4] = ["audit", "audits", "benchmarks", "benchmark"];
+
 /// 文書のパスから、参照先を探すADRのディレクトリの候補（優先する順）。
 ///
 /// 文書のディレクトリから上にたどった各祖先（ルートを含み、`docs` の要素を含むものを除く）について、
-/// 文書が `<祖先>/docs/<モジュール>/` 以下なら `<祖先>/docs/<モジュール>/adr` を、続けて
-/// `<祖先>/docs/adr` を候補にする。近い祖先が先（ADR 0009、0011）。
+/// 文書が `<祖先>/docs/<モジュール>/` 以下なら `<祖先>/docs/<モジュール>/<名前>` を、続けて
+/// `<祖先>/docs/<名前>` を候補にする。`<名前>` は [`ADR_DIR_NAMES`] の順に並べる。
+/// 近い祖先が先（ADR 0009、0011、0014）。
 pub fn candidate_dirs(doc: &str) -> Vec<String> {
     let parts: Vec<&str> = doc.split('/').collect();
     let dirs = &parts[..parts.len().saturating_sub(1)];
@@ -302,14 +309,16 @@ pub fn candidate_dirs(doc: &str) -> Vec<String> {
         .flat_map(|depth| {
             let prefix: String = dirs[..depth].iter().map(|dir| format!("{dir}/")).collect();
             let module = match &dirs[depth..] {
-                ["docs", module, ..] if !module.is_empty() && *module != "adr" => {
-                    Some(format!("{prefix}docs/{module}/adr"))
+                ["docs", module, ..] if !module.is_empty() && !ADR_DIR_NAMES.contains(module) => {
+                    Some(format!("{prefix}docs/{module}"))
                 }
                 _ => None,
             };
             module
                 .into_iter()
-                .chain(std::iter::once(format!("{prefix}docs/adr")))
+                .chain(std::iter::once(format!("{prefix}docs")))
+                .flat_map(|base| ADR_DIR_NAMES.map(|name| format!("{base}/{name}")))
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -456,38 +465,69 @@ mod tests {
 
     #[test]
     fn candidate_directories() {
-        let cases: [(&str, &[&str]); 9] = [
-            ("README.md", &["docs/adr"]),
-            ("docs/specifications.md", &["docs/adr"]),
-            ("docs/adr/0002-b.md", &["docs/adr"]),
-            (
-                "docs/server/adr/0002-b.md",
-                &["docs/server/adr", "docs/adr"],
-            ),
-            ("docs/server/notes.md", &["docs/server/adr", "docs/adr"]),
-            ("src/docs/a.md", &["src/docs/adr", "docs/adr"]),
+        // 各候補の docs のディレクトリ（`<祖先>/docs/<モジュール>` か `<祖先>/docs`）。実際の候補は、それぞれに
+        // ADR_DIR_NAMES（adr、adrs、decisions、decision）の順で名前を付けたもの（ADR 0014）。
+        let cases: [(&str, &[&str]); 10] = [
+            ("README.md", &["docs"]),
+            ("docs/specifications.md", &["docs"]),
+            ("docs/adr/0002-b.md", &["docs"]),
+            ("docs/server/adr/0002-b.md", &["docs/server", "docs"]),
+            ("docs/server/notes.md", &["docs/server", "docs"]),
+            ("src/docs/a.md", &["src/docs", "docs"]),
             // ADR 0011
             (
                 "packages/server/README.md",
-                &["packages/server/docs/adr", "packages/docs/adr", "docs/adr"],
+                &["packages/server/docs", "packages/docs", "docs"],
             ),
             (
                 "packages/server/docs/api/notes.md",
                 &[
-                    "packages/server/docs/api/adr",
-                    "packages/server/docs/adr",
-                    "packages/docs/adr",
-                    "docs/adr",
+                    "packages/server/docs/api",
+                    "packages/server/docs",
+                    "packages/docs",
+                    "docs",
                 ],
             ),
             (
                 "packages/server/docs/adr/0002-b.md",
-                &["packages/server/docs/adr", "packages/docs/adr", "docs/adr"],
+                &["packages/server/docs", "packages/docs", "docs"],
             ),
+            // ADR 0014: decisions はモジュールとみなさない
+            ("docs/decisions/0002-b.md", &["docs"]),
         ];
-        for (doc, expected) in cases {
+        for (doc, bases) in cases {
+            let expected: Vec<String> = bases
+                .iter()
+                .flat_map(|base| ADR_DIR_NAMES.map(|name| format!("{base}/{name}")))
+                .collect();
             assert_eq!(candidate_dirs(doc), expected, "{doc}");
         }
+    }
+
+    #[test]
+    fn candidate_directories_list_name_variants() {
+        // ADR 0014 のテスト設計の例
+        assert_eq!(
+            candidate_dirs("README.md"),
+            ["docs/adr", "docs/adrs", "docs/decisions", "docs/decision"]
+        );
+        assert_eq!(
+            candidate_dirs("docs/server/notes.md"),
+            [
+                "docs/server/adr",
+                "docs/server/adrs",
+                "docs/server/decisions",
+                "docs/server/decision",
+                "docs/adr",
+                "docs/adrs",
+                "docs/decisions",
+                "docs/decision",
+            ]
+        );
+        assert_eq!(
+            candidate_dirs("docs/decisions/0002-b.md"),
+            ["docs/adr", "docs/adrs", "docs/decisions", "docs/decision"]
+        );
     }
 
     #[test]

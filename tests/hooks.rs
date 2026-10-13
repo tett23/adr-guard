@@ -1638,3 +1638,122 @@ mod records {
         assert!(stderr.contains(ADR), "{stderr}");
     }
 }
+
+mod directory_name_variants {
+    use super::*;
+
+    /// ADR 0014 のディレクトリの名前の揺れだけを持つ一時リポジトリ（`docs/adr/` は作らない）。
+    fn variants_repo() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]);
+        git(p, &["config", "user.name", "test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+        write(
+            p,
+            "docs/adrs/0001-a.md",
+            "# ADR 0001: a\n\nステータス: 採択\n\n本文\n",
+        );
+        write(
+            p,
+            "docs/decisions/0002-b.md",
+            "# ADR 0002: b\n\nステータス: 採択\n\n本文\n",
+        );
+        write(p, "docs/audits/a.md", "# 監査\n\n結果\n");
+        write(p, "docs/benchmark/v1.json", "{\"ms\": 10}\n");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "--no-verify", "-m", "init"]);
+        dir
+    }
+
+    fn run(dir: &Path, args: &[&str]) -> (i32, String, String) {
+        let output = Command::new(BIN)
+            .args(args)
+            .current_dir(dir)
+            .env_remove("ADR_GUARD_ALLOW")
+            .output()
+            .unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stdout).unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    }
+
+    const PRE_COMMIT: [&str; 3] = ["pre-commit", "--allow-status", "--allow-links"];
+
+    #[test]
+    fn pre_commit_rejects_body_changes_of_adrs_in_variant_directories() {
+        let dir = variants_repo();
+        let p = dir.path();
+        write(
+            p,
+            "docs/adrs/0001-a.md",
+            "# ADR 0001: a\n\nステータス: 採択\n\n改変\n",
+        );
+        write(
+            p,
+            "docs/decisions/0002-b.md",
+            "# ADR 0002: b\n\nステータス: 採択\n\n改変\n",
+        );
+        git(p, &["add", "-A"]);
+        let (code, _, stderr) = run(p, &PRE_COMMIT);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("docs/adrs/0001-a.md"), "{stderr}");
+        assert!(stderr.contains("docs/decisions/0002-b.md"), "{stderr}");
+    }
+
+    #[test]
+    fn list_includes_adrs_in_variant_directories() {
+        let dir = variants_repo();
+        let (code, stdout, stderr) = run(dir.path(), &["list"]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("docs/adrs/0001-a.md"), "{stdout}");
+        assert!(stdout.contains("docs/decisions/0002-b.md"), "{stdout}");
+        assert!(!stdout.contains("docs/audits/"), "{stdout}");
+    }
+
+    #[test]
+    fn check_status_checks_adrs_in_variant_directories() {
+        let dir = variants_repo();
+        let p = dir.path();
+        assert_eq!(run(p, &["check-status"]).0, 0);
+        write(p, "docs/decisions/0003-c.md", "# ADR 0003: c\n\n本文\n");
+        git(p, &["add", "-A"]);
+        git(p, &["commit", "-q", "--no-verify", "-m", "no status"]);
+        let (code, _, stderr) = run(p, &["check-status"]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("docs/decisions/0003-c.md"), "{stderr}");
+    }
+
+    #[test]
+    fn links_fix_links_to_adrs_in_variant_directories() {
+        let dir = variants_repo();
+        let p = dir.path();
+        write(p, "README.md", "ADR 0001 と ADR 0002 を参照する\n");
+        let (code, _, stderr) = run(p, &["links", "--fix"]);
+        assert_eq!(code, 0, "{stderr}");
+        let readme = std::fs::read_to_string(p.join("README.md")).unwrap();
+        assert_eq!(
+            readme,
+            "[ADR 0001](docs/adrs/0001-a.md) と [ADR 0002](docs/decisions/0002-b.md) を参照する\n"
+        );
+    }
+
+    #[test]
+    fn pre_commit_rejects_changes_of_records_in_variant_directories() {
+        let dir = variants_repo();
+        let p = dir.path();
+        write(p, "docs/audits/a.md", "changed\n");
+        write(p, "docs/benchmark/v1.json", "{\"ms\": 20}\n");
+        git(p, &["add", "-A"]);
+        let (code, _, stderr) = run(p, &PRE_COMMIT);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("コミット済みの記録"), "{stderr}");
+        assert!(stderr.contains("docs/audits/"), "{stderr}");
+        assert!(stderr.contains("docs/benchmark/"), "{stderr}");
+        assert!(stderr.contains("docs/audits/a.md"), "{stderr}");
+        assert!(stderr.contains("docs/benchmark/v1.json"), "{stderr}");
+    }
+}

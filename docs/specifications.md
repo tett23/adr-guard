@@ -10,6 +10,7 @@
 - 対象は、リポジトリのルートからの相対パスに次のどちらかを含むファイル（[ADR 0002](adr/0002-module-adr-directories.md)、[0011](adr/0011-nested-adr-directories.md)）。`adr/` より下の深さは問わない。
   - `docs/adr/`
   - `docs/<モジュール>/adr/`。`<モジュール>` は空でない1つのパス要素（`/` を含まない）。モノレポでモジュールごとにADRを分ける場合に使う。
+- 上の `adr` の代わりに、`adrs`、`decisions`、`decision` の名前も使える（[ADR 0014](adr/0014-directory-name-variants.md)）。例：`docs/adrs/`、`docs/decisions/`、`docs/server/adrs/`、`packages/server/docs/decisions/`。名前は完全に一致するものだけで、`docs/adr-old/`、`docs/architecture/`、`docs/decided/`、大文字の `docs/Decisions/`、`docs/ADR/` は対象外。
 - 上の `docs/adr/` と `docs/<モジュール>/adr/` は、どの深さにあってもよい。`docs` より前の要素（`packages/server/` など）は空でなければ名前を問わない（[ADR 0011](adr/0011-nested-adr-directories.md)）。例：`packages/server/docs/adr/`、`apps/web/docs/api/adr/`、`src/docs/server/adr/`。
 - `docs/a/b/adr/` のような2段以上のモジュールと、`packages/server/adr/` のように `docs` を挟まない場所は対象外。
 - ステータスの行は、行頭が `ステータス:` か `Status:`（見出しの大文字・小文字は区別し、コロンは半角）の行とする（[ADR 0012](adr/0012-status-line-and-status-adt.md)）。`- Status:`、`* Status:`、`status:`、全角のコロン、行頭の空白は認めない。
@@ -27,9 +28,9 @@
   - `--allow-links`（[ADR 0009](adr/0009-require-links-for-adr-references.md)）：下記のとおり、ADRの参照のリンクをテキストに戻す。`claude-hook` は受け付けない。
 - 違反のメッセージは、`--allow-status` があれば `コミット済みのADRはステータスの行以外を変更できません: <パス>`、なければ `コミット済みのADRは変更できません（ステータスの行の変更は --allow-status で許可できます）: <パス>`。
 - 監査や計測の記録も保護する（[ADR 0013](adr/0013-protect-audit-and-benchmark-records.md)）。
-  - 記録は、ADRのパスと同じ形で `<名前>` が `audit` か `benchmarks` のディレクトリ（どの深さの `docs/audit/`、`docs/benchmarks/`、`docs/<モジュール>/audit/`、`docs/<モジュール>/benchmarks/`）以下の、すべてのファイル。`docs/audits/`、`docs/benchmark/` は対象外。
+  - 記録は、ADRのパスと同じ形で `<名前>` が `audit`、`audits`、`benchmarks`、`benchmark` のいずれかのディレクトリ（どの深さの `docs/<名前>/`、`docs/<モジュール>/<名前>/`）以下の、すべてのファイル（[ADR 0014](adr/0014-directory-name-variants.md)）。大文字の `docs/Benchmarks/` などは対象外。
   - コミット済みの記録の変更、削除、リネームを違反とする。新規追加は許可する。`--allow-status` と `--allow-links` は記録には効かない。
-  - 違反のメッセージは `コミット済みの記録（docs/audit/、docs/benchmarks/）は変更できません: <パス>` と `コミット済みの記録（docs/audit/、docs/benchmarks/）は削除・移動できません: <パス>`。記録の違反があれば、案内に `記録を直す場合は、新しい記録を作成してください。` を加える。
+  - 違反のメッセージは `コミット済みの記録（docs/audit/、docs/audits/、docs/benchmarks/、docs/benchmark/）は変更できません: <パス>` と `コミット済みの記録（docs/audit/、docs/audits/、docs/benchmarks/、docs/benchmark/）は削除・移動できません: <パス>`。記録の違反があれば、案内に `記録を直す場合は、新しい記録を作成してください。` を加える。
   - `pre-commit`、`check-range`、`claude-hook` で検査する。`claude-hook` では、コミット済みの記録の内容を変える編集を終了コード2で拒否する。
   - `links --fix` は、コミット済みの記録をコミット済みのADRと同じく既定では書きかえず、`--include-committed` で書きかえたときは `<パス>: コミット済みの記録です。コミットには ADR-Guard-Allow のトレーラーが要ります` を表示する。
 - 意図してADRや記録を書きかえる場合は、次の方法で違反を許可する（[ADR 0008](adr/0008-allow-intentional-adr-rewrites.md)、[0013](adr/0013-protect-audit-and-benchmark-records.md)）。
@@ -41,7 +42,7 @@
 - 文書（`.md`）の中のADRの参照にはリンクが要る（[ADR 0009](adr/0009-require-links-for-adr-references.md)）。
   - 参照は `ADR` と半角の空白と4桁の数字（前後が英数字でないもの）。`、` か `,`（後ろに空白があってもよい）で区切って続く4桁の数字も参照とする。
   - フェンスで囲んだコードブロック、インラインのコード（同じ数の `` ` `` の並びで囲んだ部分）、リンク（インラインと参照形式）の中と、ADR自身の番号は対象外。
-  - 参照先は、文書のディレクトリから上にたどった各祖先 `<祖先>`（ルートを含み、`docs` の要素を含むものを除く）について、近い順に、文書が `<祖先>/docs/<モジュール>/` 以下（`<モジュール>` は `adr` 以外）なら `<祖先>/docs/<モジュール>/adr/`、続けて `<祖先>/docs/adr/` から、ファイル名が `<番号>-` で始まる `.md` がちょうど1つあるものを探す（[ADR 0011](adr/0011-nested-adr-directories.md)）。見つからない番号は検査しない。
+  - 参照先は、文書のディレクトリから上にたどった各祖先 `<祖先>`（ルートを含み、`docs` の要素を含むものを除く）について、近い順に、文書が `<祖先>/docs/<モジュール>/` 以下（`<モジュール>` はADRのディレクトリの名前以外）なら `<祖先>/docs/<モジュール>/<名前>/`、続けて `<祖先>/docs/<名前>/` から、ファイル名が `<番号>-` で始まる `.md` がちょうど1つあるものを探す（[ADR 0011](adr/0011-nested-adr-directories.md)）。`<名前>` は `adr`、`adrs`、`decisions`、`decision` の順に並べる。同じ祖先の複数のディレクトリに同じ番号のADRがあれば、先に並ぶものを参照先とする（[ADR 0014](adr/0014-directory-name-variants.md)）。見つからない番号は検査しない。
   - リンクは `[ADR <番号>](<文書のディレクトリからの相対パス>)`、続く番号は `[<番号>](<相対パス>)`。
 
 ### サブコマンド

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/tett23/adr-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/tett23/adr-guard/actions/workflows/ci.yml)
 
-コミット済みのADR（`docs/adr/`、モノレポでは `docs/<モジュール>/adr/` や `packages/<パッケージ>/docs/adr/` なども）を変更できないようにするツール。ステータスの行（`ステータス:` か `Status:` で始まる行）の変更と、ADRの参照のリンクだけの変更は、オプションで許可する。
+コミット済みのADR（`docs/adr/`、モノレポでは `docs/<モジュール>/adr/` や `packages/<パッケージ>/docs/adr/` なども。`adr` の代わりに `adrs`、`decisions`、`decision` も使える）を変更できないようにするツール。ステータスの行（`ステータス:` か `Status:` で始まる行）の変更と、ADRの参照のリンクだけの変更は、オプションで許可する。
 
 ADRは決定の記録であり、あとから書きかえると経緯が失われる。
 仕様を変える場合は、元のADRを書きかえずに新しいADRを作成する。
@@ -11,8 +11,9 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 ## 規則
 
 - 対象は `docs/adr/` と `docs/<モジュール>/adr/`（例：`docs/server/adr/`）以下のファイル。どの深さにあってもよく、`packages/server/docs/adr/` や `apps/web/docs/api/adr/` も対象になる（[ADR 0011](docs/adr/0011-nested-adr-directories.md)）。モジュールは1段だけで、`docs/a/b/adr/` は対象外。
+- ディレクトリの名前は `adr` のほか、`adrs`、`decisions`、`decision` も使える（例：`docs/adrs/`、`docs/decisions/`、`packages/server/docs/decisions/`。[ADR 0014](docs/adr/0014-directory-name-variants.md)）。`docs/adr-old/`、`docs/architecture/`、大文字の `docs/Decisions/` などは対象外。
 - 設定は不要。モノレポでモジュールごとにADRを分けても、導入の手順は変わらない。
-- 監査や計測の記録（`docs/audit/` と `docs/benchmarks/` 以下のすべてのファイル。どの深さの `docs/` でも、`docs/<モジュール>/` でもよい）も、コミット済みのものは変更・削除・移動できない（[ADR 0013](docs/adr/0013-protect-audit-and-benchmark-records.md)）。`--allow-status` と `--allow-links` は記録には効かない。記録を直す場合は、新しい記録を作成する。
+- 監査や計測の記録（`docs/audit/`、`docs/audits/`、`docs/benchmarks/`、`docs/benchmark/` 以下のすべてのファイル。どの深さの `docs/` でも、`docs/<モジュール>/` でもよい）も、コミット済みのものは変更・削除・移動できない（[ADR 0013](docs/adr/0013-protect-audit-and-benchmark-records.md)、[0014](docs/adr/0014-directory-name-variants.md)）。`--allow-status` と `--allow-links` は記録には効かない。記録を直す場合は、新しい記録を作成する。
 - ADRは、行頭が `ステータス:` か `Status:` のステータスの行をちょうど1つ持つ（[ADR 0012](docs/adr/0012-status-line-and-status-adt.md)）。`- Status:` や `status:` は認めない。ステータスの行が無い、または2つ以上あるADRは違反になる。
 - ステータスの値は、`提案`／`Proposed`、`採択`／`Accepted`、`採択→…`／`Superseded by …`、`却下`／`Rejected`、`破棄`／`Discarded`、`廃止`／`Deprecated` として解釈する。どれにも当たらない値も違反にはしない。
 - コミット済みのADRは変更できない。ただし、検査に `--allow-status` を付けるとステータスの行の変更を、`--allow-links` を付けるとADRの参照のリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
@@ -57,7 +58,7 @@ adr-guard proposed | xargs "$EDITOR"
 | Linux（x86_64） | `x86_64-unknown-linux-gnu` |
 
 ```sh
-tag=v0.8.0
+tag=v0.8.1
 target=aarch64-apple-darwin
 archive="adr-guard-$tag-$target.tar.gz"
 curl -fsSLO "https://github.com/tett23/adr-guard/releases/download/$tag/$archive"
@@ -65,7 +66,7 @@ curl -fsSLO "https://github.com/tett23/adr-guard/releases/download/$tag/SHA256SU
 grep "$archive" SHA256SUMS | shasum -a 256 -c   # Linuxでは sha256sum -c
 tar -xzf "$archive"
 mv "${archive%.tar.gz}/adr-guard" ~/.local/bin/
-adr-guard --version   # adr-guard 0.8.0
+adr-guard --version   # adr-guard 0.8.1
 ```
 
 macOS向けのバイナリは、Apple Developer IDによる署名と公証をしていない。
@@ -75,7 +76,7 @@ macOS向けのバイナリは、Apple Developer IDによる署名と公証をし
 ### ソースから
 
 ```sh
-cargo install --git https://github.com/tett23/adr-guard --tag v0.8.0
+cargo install --git https://github.com/tett23/adr-guard --tag v0.8.1
 ```
 
 手元の adr-guard のバージョンは `adr-guard --version` で確かめる。
@@ -129,7 +130,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: tett23/adr-guard@v0.8.0
+      - uses: tett23/adr-guard@v0.8.1
         with:
           base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           head: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
@@ -140,7 +141,13 @@ jobs:
 - 範囲内の全コミットを読むため、`fetch-depth: 0` でチェックアウトする。
 - `check-range` の後に、チェックアウトした作業ツリーで `adr-guard links` を実行する。入力 `links: false` で止められる。
 - 入力 `allow-status: true`、`allow-links: true` で、`check-range` に `--allow-status`、`--allow-links` を付ける。どちらも既定は `false`。
-- actionはタグかコミットのSHAで指定する。使う adr-guard のバージョンは、actionの `Cargo.toml` のバージョンになる。`version` 入力（例：`v0.8.0`）で変えられる。
+- actionはタグかコミットのSHAで指定する。使う adr-guard のバージョンは、actionの `Cargo.toml` のバージョンになる。`version` 入力（例：`v0.8.1`）で変えられる。
+
+### v0.8.1 に上げる場合
+
+v0.8.1 から、`adrs`、`decisions`、`decision` のディレクトリもADRとして、`audits`、`benchmark` のディレクトリも記録として保護する（[ADR 0014](docs/adr/0014-directory-name-variants.md)）。
+これらの名前のディレクトリをADRや記録のつもりでなく使っている場合は、上げる前に名前を変える。
+ADRとして扱われるため、ステータスの行の検査とリンクの検査もかかる。上げる前に `adr-guard check-status` と `adr-guard links` を実行して確かめる。
 
 ### v0.5.0 に上げる場合
 
@@ -175,7 +182,7 @@ v0.7.0 から、ステータスの行が無いADRと、2つ以上あるADRは、
 ### 意図してADRや記録を書きかえる場合
 
 ADRの参照にリンクを付けるだけなら、上の `--allow-links` を使う。
-記録（`docs/audit/`、`docs/benchmarks/`）には例外が無いため、誤記を直す場合なども次の手段が要る。`adr-guard links --fix --include-committed` でコミット済みの記録のリンクを直した場合も同じ。
+記録（`docs/audit/`、`docs/audits/`、`docs/benchmarks/`、`docs/benchmark/`）には例外が無いため、誤記を直す場合なども次の手段が要る。`adr-guard links --fix --include-committed` でコミット済みの記録のリンクを直した場合も同じ。
 次の手段は、それ以外の書きかえのための緊急用であり、通常は使わない。
 
 書式の修正など、人間が判断したうえでコミット済みのADRを書きかえる場合は、書きかえをほかの変更と分けて1つのコミットにし、次の2つを行う。

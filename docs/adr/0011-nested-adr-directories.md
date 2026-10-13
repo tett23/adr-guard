@@ -1,6 +1,6 @@
 # ADR 0011: `packages/<パッケージ>/docs/adr/` など、サブディレクトリの中のADRも保護する
 
-ステータス: 採択
+ステータス: 採択→ディレクトリの名前は[ADR 0014](0014-directory-name-variants.md)
 
 ## 文脈
 

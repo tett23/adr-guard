@@ -1,4 +1,5 @@
-//! コミット済みのADR（どの深さかの docs/adr/、docs/<モジュール>/adr/）と記録（docs/audit/、docs/benchmarks/。ADR 0013）を
+//! コミット済みのADR（どの深さかの docs/adr/、docs/<モジュール>/adr/。adrs、decisions、decision も可）と
+//! 記録（docs/audit/、docs/audits/、docs/benchmarks/、docs/benchmark/。ADR 0013、0014）を
 //! 変更できないようにするガード。ADRのステータスの行とリンクの変更はオプションで許可する（ADR 0010）。
 //!
 //! - `adr-guard pre-commit [--allow-status] [--allow-links]`: gitのpre-commit hookとして、ステージされた変更を検査する。
@@ -33,7 +34,8 @@ gitのpre-commit hook、Claude CodeのPreToolUse hook、CI（GitHub Actions）�
 
 ADRとステータス:
   ADRは、リポジトリのルートからの相対パスのどこかに docs/adr/ または docs/<モジュール>/adr/ があり、その下にあるファイル。
-  例: docs/adr/、docs/server/adr/、packages/server/docs/adr/、apps/web/docs/api/adr/。
+  adr の代わりに adrs、decisions、decision の名前も使える。
+  例: docs/adr/、docs/server/adr/、packages/server/docs/adr/、apps/web/docs/api/adr/、docs/decisions/。
   <モジュール> は1段だけ（docs/a/b/adr/ は対象外）。一覧や参照の検査では、拡張子が .md のものを扱う。
   行頭が「ステータス:」または「Status:」の行をステータスの行とする（見出しの大文字・小文字と半角のコロンは
   この形だけ。「- Status:」「* Status:」「status:」は認めない）。ADRはステータスの行をちょうど1つ持つ。
@@ -53,7 +55,8 @@ ADRとステータス:
     ADRの参照のリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
   - 新しいADRの追加と、未コミットのADRの編集は自由にできる。
   - 仕様を変える場合は、元のADRを書きかえずに、新しいADRを作成する。
-  - 監査や計測の記録（docs/audit/、docs/benchmarks/ 以下のすべてのファイル。ADRと同じく、どの深さの docs/ でも
+  - 監査や計測の記録（docs/audit/、docs/audits/、docs/benchmarks/、docs/benchmark/ 以下のすべてのファイル。
+    ADRと同じく、どの深さの docs/ でも
     docs/<モジュール>/ でもよい）も、コミット済みのものは変更・削除・移動できない。--allow-status と
     --allow-links は記録には効かない。記録を直す場合は、新しい記録を作成する。新しい記録の追加は自由。
   - 文書（.md）の中のADRの参照（ADR 0001 の形）には、ADRのファイルへのリンクを付ける。
@@ -61,6 +64,7 @@ ADRとステータス:
     インラインのコード、コードブロック、リンクのテキストの中と、ADR自身の番号は対象外。
     参照先は、文書から近い順に、祖先の docs/<モジュール>/adr/（文書がその docs/<モジュール>/ 以下のとき）と
     docs/adr/ から探す。例: packages/server/README.md は packages/server/docs/adr/ を先に、ルートの docs/adr/ を後に探す。
+    同じ祖先では adr、adrs、decisions、decision の順に探す。
     参照先のADRが見つからない番号は検査しない。
 
 サブコマンド:
@@ -277,14 +281,14 @@ fn is_under_docs(path: &str, names: &[&str]) -> bool {
     })
 }
 
-/// ADRのパスか（ADR 0002、0011）。
+/// ADRのパスか（ADR 0002、0011、0014）。
 fn is_adr_path(path: &str) -> bool {
-    is_under_docs(path, &["adr"])
+    is_under_docs(path, &links::ADR_DIR_NAMES)
 }
 
-/// 監査や計測の記録（`docs/audit/`、`docs/benchmarks/`）のパスか（ADR 0013）。
+/// 監査や計測の記録（`docs/audit/`、`docs/audits/`、`docs/benchmarks/`、`docs/benchmark/`）のパスか（ADR 0013、0014）。
 fn is_record_path(path: &str) -> bool {
-    is_under_docs(path, &["audit", "benchmarks"])
+    is_under_docs(path, &links::RECORD_DIR_NAMES)
 }
 
 /// ステータスの行（`ステータス:` と `Status:` で始まるすべての行）を取り除く（ADR 0010、0012）。
@@ -350,7 +354,9 @@ fn change_violation(path: &str, allow: Allow) -> String {
 
 /// コミット済みの記録を変更したときのメッセージ（ADR 0013）。
 fn record_change_violation(path: &str) -> String {
-    format!("コミット済みの記録（docs/audit/、docs/benchmarks/）は変更できません: {path}")
+    format!(
+        "コミット済みの記録（docs/audit/、docs/audits/、docs/benchmarks/、docs/benchmark/）は変更できません: {path}"
+    )
 }
 
 fn git(args: &[&str], cwd: &Path) -> Option<Vec<u8>> {
@@ -397,7 +403,7 @@ fn violations(
             ("M", true) => Some(record_change_violation(path)),
             (_, false) => Some(format!("コミット済みのADRは削除・移動できません: {path}")),
             (_, true) => Some(format!(
-                "コミット済みの記録（docs/audit/、docs/benchmarks/）は削除・移動できません: {path}"
+                "コミット済みの記録（docs/audit/、docs/audits/、docs/benchmarks/、docs/benchmark/）は削除・移動できません: {path}"
             )),
         };
         if let Some(message) = message {
@@ -939,6 +945,13 @@ mod tests {
             "apps/web/docs/adr/0001-a.md",
             "packages/server/docs/api/adr/0001-a.md",
             "src/docs/server/adr/a.md",
+            // ADR 0014
+            "docs/adrs/0001-a.md",
+            "docs/decisions/0001-a.md",
+            "docs/decision/0001-a.md",
+            "docs/server/adrs/0001-a.md",
+            "packages/server/docs/adrs/0001-a.md",
+            "packages/server/docs/decisions/0001-a.md",
         ];
         for path in adr {
             assert!(is_adr_path(path), "{path}");
@@ -952,7 +965,6 @@ mod tests {
             "docs/adr.md",
             "docs/server/adr",
             "docs/server/adr.md",
-            "docs/server/adrs/0001-a.md",
             "docs/server/other/a.md",
             "docs/a/b/adr/0001-a.md",
             "docs//adr/0001-a.md",
@@ -961,8 +973,15 @@ mod tests {
             // ADR 0011
             "packages/server/docs/a/b/adr/0001-a.md",
             "packages/server/adr/0001-a.md",
-            "packages/server/docs/adrs/0001-a.md",
             "packages//docs/adr/0001-a.md",
+            // ADR 0014
+            "docs/adr-old/a.md",
+            "docs/architecture/a.md",
+            "docs/decided/a.md",
+            "docs/Decisions/a.md",
+            "docs/ADR/0001-a.md",
+            "docs/audits/a.md",
+            "docs/benchmark/v1.json",
         ];
         for path in non_adr {
             assert!(!is_adr_path(path), "{path}");
@@ -1122,18 +1141,26 @@ mod tests {
             "docs/benchmarks/graphs/latency.svg",
             "docs/server/audit/2026-10-07.md",
             "packages/server/docs/benchmarks/v1.csv",
+            // ADR 0014
+            "docs/audits/a.md",
+            "docs/benchmark/v1.json",
+            "docs/server/benchmark/v1.json",
+            "packages/server/docs/audits/a.md",
         ] {
             assert!(is_record_path(path), "{path}");
             assert!(!is_adr_path(path), "{path}");
         }
         for path in [
-            "docs/audits/a.md",
-            "docs/benchmark/a.md",
             "docs/a/b/audit/a.md",
             "benchmarks/a.json",
             "packages/server/audit/a.md",
             "docs/audit",
             "docs/adr/0001-a.md",
+            // ADR 0014
+            "docs/adrs/0001-a.md",
+            "docs/decisions/0001-a.md",
+            "docs/Benchmarks/a.json",
+            "docs/audit-old/a.md",
         ] {
             assert!(!is_record_path(path), "{path}");
         }
@@ -1165,6 +1192,10 @@ mod tests {
             ("docs/adr/0001-a.md", Some("0001")),
             ("docs/server/adr/0012-b.md", Some("0012")),
             ("packages/server/docs/adr/0003-c.md", Some("0003")),
+            // ADR 0014
+            ("docs/adrs/0003-c.md", Some("0003")),
+            ("docs/decisions/0004-d.md", Some("0004")),
+            ("docs/decision/0005-e.md", Some("0005")),
             ("docs/adr/notes.md", None),
             ("docs/adr/0001.md", None),
             ("docs/0001-a.md", None),
