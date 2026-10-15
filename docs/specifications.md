@@ -114,6 +114,27 @@
 
 - `main` へのpushとプルリクエストで、`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` と、ADRの検査（`cargo run -- check-range --allow-status --allow-links`）、リンクの検査（`cargo run -- links`）、ステータスの行の検査（`cargo run -- check-status`）を実行する。
 
+## 不明な挙動
+
+利用する側のリポジトリで観察したが、原因を突き止めていない挙動をここに記録する。
+再現の手順がわかったら、ADR を作成して直すか、仕様どおりであることをここに書く。
+
+### `core.hooksPath` が絶対パスに書き換わる
+
+- 観察した場所：tett23/golem（2026-10-15 から 2026-10-16）。一つのリポジトリに十を超える git worktree を作り、それぞれで並行してコミットした。
+- 観察したこと：共有の `.git/config` の `core.hooksPath` を相対パスの `.githooks` にしておいたが、三回、元のチェックアウトの `.githooks` を指す絶対パスに書き換わっていた。
+- 影響：元のチェックアウトは古いブランチにあり、その `.githooks/pre-commit` は `--allow-status` と `--allow-links` を持たない古いものだった。そのため、各 worktree のコミットが古いフックで検査され、ステータスの行の変更が拒否された。
+- わかっていないこと：書き換えたのが adr-guard か、git か、worktree を作る道具か、それ以外かはわからない。golem のリポジトリの中のスクリプトと文書は、どれも相対パスの `git config core.hooksPath .githooks` だけを書いている。
+- 回避：`git -c core.hooksPath=.githooks commit` で、その worktree のフックを指定してコミットした。
+
+### pre-commit がマージのコミットのステータスの行の変更を拒否する
+
+- 観察した場所：tett23/golem（2026-10-15 から 2026-10-16）、adr-guard 0.8.1、`exec adr-guard pre-commit --allow-status --allow-links`。
+- 観察したこと：`origin/main` をブランチにマージし、`origin/main` の側でコミット済みの ADR のステータスの行が変わっているとき、マージのコミットが pre-commit で拒否されることがあった。複数の worktree で、別々に起きた。
+- 再現しないこと：同じ状態で `adr-guard pre-commit --allow-status --allow-links` を手で実行すると、終了コードは 0 だった。同じ範囲を `adr-guard check-range` にかけても通った。フックに環境変数を書き出す行を一時的に足すと、同じコミットが通った。
+- 推測：フックの中では `GIT_DIR` などが worktree の gitdir に設定される。上の `core.hooksPath` の書き換えで、古いフックが動いていた可能性もある。どちらも確かめていない。
+- 回避：フックを飛ばさずに、マージをやり直すか、`git -c core.hooksPath=.githooks` でコミットした。
+
 ## 破棄したADR
 
 なし
