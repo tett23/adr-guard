@@ -29,7 +29,7 @@ const LINKS_ADVICE: &str = "adr-guard links --fix で修正できます。コミ
 const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] <base> <head>|list [--status]|proposed [--status]|links [--fix [--include-committed]]|check-status|--version|--help>";
 const HELP: &str = "\
 コミット済みのADR（Architecture Decision Record）を変更できないようにするツール。
-ステータスの行の変更（--allow-status）と、ADRの参照のリンクだけの変更（--allow-links）は、オプションで許可できる。
+ステータスの行の変更（--allow-status）と、リンクだけの変更（--allow-links）は、オプションで許可できる。
 gitのpre-commit hook、Claude CodeのPreToolUse hook、CI（GitHub Actions）の3か所で検査する。
 
 ADRとステータス:
@@ -52,7 +52,7 @@ ADRとステータス:
 規則:
   - コミット済みのADRは変更できない。削除・移動（リネーム）もできない。
     ただし、検査に --allow-status を付けるとステータスの行の変更を、--allow-links を付けると
-    ADRの参照のリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
+    リンクだけの変更（リンクを付ける・外す・リンク先を変える。画像はリンク先だけ）を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
   - 新しいADRの追加と、未コミットのADRの編集は自由にできる。
   - 仕様を変える場合は、元のADRを書きかえずに、新しいADRを作成する。
   - 監査や計測の記録（docs/audit/、docs/audits/、docs/benchmarks/、docs/benchmark/ 以下のすべてのファイル。
@@ -74,8 +74,10 @@ ADRとステータス:
       - ステージされた .md のファイルの、リンクの無いADRの参照を拒否する。
     ステージされたADRのステータスの行の数も検査する（初回のコミットでは検査しない）。
     --allow-status  コミット済みのADRで、ステータスの行の変更（値・見出しの変更と、無かった行の追加）を許可する。
-    --allow-links   コミット済みのADRで、ADRの参照のリンクだけが異なる変更（リンクを付ける・外す・
-                    リンク先を変える）を許可する。
+    --allow-links   コミット済みのADRで、リンクだけが異なる変更を許可する。ADRの参照に限らず、
+                    リンク（インライン・参照形式）を付ける・外す・リンク先を変える変更と、画像のリンク先・
+                    リンクの参照定義の行（[1]: URL）の変更が通る。リンクのテキストの変更、画像の追加・削除、
+                    自動リンク（<URL>）と本文のURLの変更は通らない。
     終了コード: 0 問題なし、1 違反あり
 
   adr-guard claude-hook [--allow-status]
@@ -120,7 +122,7 @@ ADRとステータス:
 
 意図してADRや記録を書きかえる場合:
   --allow-status         ステータスの行の変更を許可する。hook、Claude Codeのhook、CIで常に付けてよい。
-  --allow-links          ADRの参照にリンクを付けるだけの変更を許可する。hookとCIで常に付けてよい。
+  --allow-links          リンクを付ける・外す・リンク先を変えるだけの変更を許可する。hookとCIで常に付けてよい。
   ADR_GUARD_ALLOW=<理由>  環境変数。pre-commit で、ADRと記録のどんな書きかえも許可する。
                          同じhookのほかの検査は迂回しない。リンクの検査は許可しない。
   ADR-Guard-Allow: <理由>  コミットメッセージの最後の段落（トレーラー）。check-range で、そのコミットの
@@ -163,7 +165,7 @@ fn version() -> String {
 struct Allow {
     /// ステータスの行の変更（`--allow-status`）
     status: bool,
-    /// ADRの参照のリンクだけの変更（`--allow-links`）
+    /// リンクだけの変更（`--allow-links`。ADR 0009、0015）
     links: bool,
 }
 
@@ -312,7 +314,7 @@ fn only_status_changed(before: &[u8], after: &[u8]) -> bool {
 fn allowed_change(before: &[u8], after: &[u8], allow: Allow) -> bool {
     let prepare = |content: &[u8]| {
         let content = if allow.links {
-            links::unlink(&String::from_utf8_lossy(content)).into_bytes()
+            links::strip_links(&String::from_utf8_lossy(content)).into_bytes()
         } else {
             content.to_vec()
         };
@@ -1116,6 +1118,66 @@ mod tests {
                 "{after}"
             );
         }
+    }
+
+    #[test]
+    fn link_changes_allowed_by_allow_links() {
+        // ADR 0015 の表（許可するもの）
+        let allowed = [
+            (
+                "[仕様](../specifications.md)\n",
+                "[仕様](../../docs/specifications.md)\n",
+            ),
+            (
+                "[本家](https://github.com/a/b/blob/master/x.md)\n",
+                "[本家](https://github.com/a/b/blob/main/x.md)\n",
+            ),
+            ("![図](images/a.png)\n", "![図](assets/a.png)\n"),
+            (
+                "本文\n\n[1]: https://example.com/old\n",
+                "本文\n\n[1]: https://example.com/new \"タイトル\"\n",
+            ),
+            ("[ADR 0001](0001-a.md)\n", "ADR 0001\n"),
+            ("[仕様](a.md)\n", "仕様\n"),
+            ("仕様\n", "[仕様](a.md)\n"),
+            ("仕様\n", "[仕様][1]\n[1]: a.md\n"),
+            ("[a](x) と [b](y)\n", "[a](z) と b\n"),
+        ];
+        for (before, after) in allowed {
+            assert!(
+                allowed_change(before.as_bytes(), after.as_bytes(), LINKS),
+                "{before:?} -> {after:?}"
+            );
+            assert!(
+                !allowed_change(before.as_bytes(), after.as_bytes(), NONE),
+                "{before:?} -> {after:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn link_changes_rejected_by_allow_links() {
+        // ADR 0015 の表（許可しないもの）
+        let rejected = [
+            ("[仕様](a.md)\n", "[仕様書](a.md)\n"),
+            ("![図](a.png)\n", "図\n"),
+            ("<https://example.com/old>\n", "<https://example.com/new>\n"),
+            ("https://example.com/old\n", "https://example.com/new\n"),
+            ("`[仕様](a.md)`\n", "`[仕様](b.md)`\n"),
+            ("本文\n[1]: a.md\n", "本文\n\n[1]: a.md\n"),
+        ];
+        for (before, after) in rejected {
+            assert!(
+                !allowed_change(before.as_bytes(), after.as_bytes(), LINKS),
+                "{before:?} -> {after:?}"
+            );
+        }
+        // --allow-status と組み合わせる
+        assert!(allowed_change(
+            "ステータス: 提案\n[仕様](a.md)\n".as_bytes(),
+            "ステータス: 採択\n[仕様](b.md)\n".as_bytes(),
+            BOTH
+        ));
     }
 
     #[test]

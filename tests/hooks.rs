@@ -1757,3 +1757,95 @@ mod directory_name_variants {
         assert!(stderr.contains("docs/benchmark/v1.json"), "{stderr}");
     }
 }
+
+mod link_changes {
+    use super::*;
+
+    const DOC: &str = "# ADR 0001: x\n\nステータス: 採択\n\n[仕様](../specifications.md) と 本家\n";
+
+    fn run(dir: &Path, args: &[&str]) -> i32 {
+        Command::new(BIN)
+            .args(args)
+            .current_dir(dir)
+            .env_remove("ADR_GUARD_ALLOW")
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .code()
+            .unwrap()
+    }
+
+    fn head(dir: &Path) -> String {
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// `repo()` のADRを、リンクを含む内容にしてコミットしたもの（ADR 0015）。
+    fn links_repo() -> TempDir {
+        let dir = repo();
+        let p = dir.path();
+        write(p, ADR, DOC);
+        write(p, "docs/audit/a.md", "[仕様](../specifications.md)\n");
+        git(p, &["add", "-A"]);
+        git(p, &["commit", "-q", "--no-verify", "-m", "links"]);
+        dir
+    }
+
+    #[test]
+    fn allow_links_permits_destination_changes() {
+        let dir = links_repo();
+        let p = dir.path();
+        let base = head(p);
+        write(
+            p,
+            ADR,
+            &DOC.replace("../specifications.md", "../../specifications.md"),
+        );
+        git(p, &["add", "-A"]);
+        assert_eq!(run(p, &["pre-commit"]), 1);
+        assert_eq!(run(p, &["pre-commit", "--allow-links"]), 0);
+        git(p, &["commit", "-q", "--no-verify", "-m", "move"]);
+        let head = head(p);
+        assert_eq!(run(p, &["check-range", &base, &head]), 1);
+        assert_eq!(run(p, &["check-range", "--allow-links", &base, &head]), 0);
+    }
+
+    #[test]
+    fn allow_links_permits_adding_links() {
+        let dir = links_repo();
+        let p = dir.path();
+        write(
+            p,
+            ADR,
+            &DOC.replace("と 本家", "と [本家](https://example.com)"),
+        );
+        git(p, &["add", "-A"]);
+        assert_eq!(run(p, &["pre-commit"]), 1);
+        assert_eq!(run(p, &["pre-commit", "--allow-links"]), 0);
+    }
+
+    #[test]
+    fn allow_links_rejects_link_text_changes() {
+        let dir = links_repo();
+        let p = dir.path();
+        write(p, ADR, &DOC.replace("[仕様]", "[仕様書]"));
+        git(p, &["add", "-A"]);
+        assert_eq!(run(p, &["pre-commit", "--allow-links"]), 1);
+    }
+
+    #[test]
+    fn allow_links_does_not_apply_to_records() {
+        let dir = links_repo();
+        let p = dir.path();
+        write(p, "docs/audit/a.md", "[仕様](../../specifications.md)\n");
+        git(p, &["add", "-A"]);
+        assert_eq!(
+            run(p, &["pre-commit", "--allow-status", "--allow-links"]),
+            1
+        );
+    }
+}
