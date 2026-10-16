@@ -8,10 +8,20 @@
 enum Segment<'a> {
     /// 参照を探す対象の文字列
     Text(&'a str),
-    /// インラインのコード、参照形式のリンクなど、そのまま残す文字列
+    /// インラインのコードなど、そのまま残す文字列
     Opaque(&'a str),
-    /// インラインのリンク `[text](dest)`
-    InlineLink { raw: &'a str, text: &'a str },
+    /// インラインのリンク `[text](dest)`。`image` は直前が `!` の画像か
+    InlineLink {
+        raw: &'a str,
+        text: &'a str,
+        image: bool,
+    },
+    /// 参照形式のリンク `[text][label]`、`[text][]`（ADR 0015）
+    RefLink {
+        raw: &'a str,
+        text: &'a str,
+        image: bool,
+    },
 }
 
 /// リンクの無い参照。
@@ -99,18 +109,18 @@ fn matching(bytes: &[u8], start: usize, open: u8, close: u8) -> Option<usize> {
 fn link_at(line: &str, start: usize) -> Option<(usize, Segment<'_>)> {
     let bytes = line.as_bytes();
     let close = matching(bytes, start, b'[', b']')?;
+    let text = &line[start + 1..close];
+    let image = start > 0 && bytes[start - 1] == b'!';
     match bytes.get(close + 1) {
         Some(b'(') => {
             let end = matching(bytes, close + 1, b'(', b')')? + 1;
-            let segment = Segment::InlineLink {
-                raw: &line[start..end],
-                text: &line[start + 1..close],
-            };
-            Some((end, segment))
+            let raw = &line[start..end];
+            Some((end, Segment::InlineLink { raw, text, image }))
         }
         Some(b'[') => {
             let end = matching(bytes, close + 1, b'[', b']')? + 1;
-            Some((end, Segment::Opaque(&line[start..end])))
+            let raw = &line[start..end];
+            Some((end, Segment::RefLink { raw, text, image }))
         }
         _ => None,
     }
@@ -242,7 +252,9 @@ pub fn scan(
                         out.push_str(&text[last..]);
                         out
                     }
-                    Segment::Opaque(raw) | Segment::InlineLink { raw, .. } => raw.to_owned(),
+                    Segment::Opaque(raw)
+                    | Segment::InlineLink { raw, .. }
+                    | Segment::RefLink { raw, .. } => raw.to_owned(),
                 })
                 .collect::<String>()
         })
@@ -250,27 +262,46 @@ pub fn scan(
     (fixed, findings)
 }
 
-/// リンクのテキストがADRの参照（`ADR 0001` か `0001`）か。
-fn is_reference_text(text: &str) -> bool {
-    let number = text.strip_prefix("ADR ").unwrap_or(text);
-    number.len() == 4 && number.bytes().all(|b| b.is_ascii_digit())
+/// 行がリンクの参照定義（行頭から3つまでの空白、`[ラベル]:`、…）か。
+fn is_definition(line: &str) -> bool {
+    let rest = line.trim_start_matches(' ');
+    let indent = line.len() - rest.len();
+    indent <= 3
+        && rest.starts_with('[')
+        && matching(rest.as_bytes(), 0, b'[', b']')
+            .is_some_and(|close| close > 1 && rest.as_bytes().get(close + 1) == Some(&b':'))
 }
 
-/// ADRの参照のリンク（`[ADR 0001](...)`、`[0006](...)`）をテキストだけにする（`--allow-links`）。
-pub fn unlink(content: &str) -> String {
+/// `--allow-links` の比較のために、リンクに関する違いを取り除く（ADR 0009、0015）。
+///
+/// リンク（インラインと参照形式）はテキストだけにし、画像はリンク先だけを取り除き、
+/// リンクの参照定義の行は行ごと取り除く。フェンスの中とインラインのコードの中は変えない。
+pub fn strip_links(content: &str) -> String {
     lines_with_fences(content)
         .into_iter()
         .map(|(line, verbatim)| {
             if verbatim {
                 return line.to_owned();
             }
+            if is_definition(line) {
+                return String::new();
+            }
             segments(line)
                 .into_iter()
                 .map(|segment| match segment {
-                    Segment::InlineLink { text, .. } if is_reference_text(text) => text,
-                    Segment::Text(raw) | Segment::Opaque(raw) | Segment::InlineLink { raw, .. } => {
-                        raw
+                    Segment::InlineLink {
+                        text, image: false, ..
                     }
+                    | Segment::RefLink {
+                        text, image: false, ..
+                    } => text.to_owned(),
+                    Segment::InlineLink {
+                        text, image: true, ..
+                    } => format!("[{text}]()"),
+                    Segment::RefLink {
+                        text, image: true, ..
+                    } => format!("[{text}][]"),
+                    Segment::Text(raw) | Segment::Opaque(raw) => raw.to_owned(),
                 })
                 .collect::<String>()
         })
@@ -283,7 +314,7 @@ pub fn link_texts(text: &str) -> String {
         .into_iter()
         .map(|segment| match segment {
             Segment::InlineLink { text, .. } => text,
-            Segment::Text(raw) | Segment::Opaque(raw) => raw,
+            Segment::Text(raw) | Segment::Opaque(raw) | Segment::RefLink { raw, .. } => raw,
         })
         .collect()
 }
@@ -450,16 +481,58 @@ mod tests {
     #[test]
     fn unlinks_reference_links() {
         assert_eq!(
-            unlink("[ADR 0005](a.md)、[0006](b.md)\n"),
+            strip_links("[ADR 0005](a.md)、[0006](b.md)\n"),
             "ADR 0005、0006\n"
         );
-        for content in [
-            "[参照](a.md)",
-            "[ADR 0001 の節](a.md)",
-            "`[ADR 0001](a.md)`",
-            "```\n[ADR 0001](a.md)\n```\n",
-        ] {
-            assert_eq!(unlink(content), content, "{content:?}");
+        // ADR 0015 から、ADRの参照以外のリンクもテキストだけにする
+        assert_eq!(strip_links("[参照](a.md)"), "参照");
+        assert_eq!(strip_links("[ADR 0001 の節](a.md)"), "ADR 0001 の節");
+        for content in ["`[ADR 0001](a.md)`", "```\n[ADR 0001](a.md)\n```\n"] {
+            assert_eq!(strip_links(content), content, "{content:?}");
+        }
+    }
+
+    #[test]
+    fn strips_all_links_but_keeps_images() {
+        let cases = [
+            ("[a][1] と [b][]", "a と b"),
+            (
+                "[仕様](../specifications.md) と [本家](https://x/y)",
+                "仕様 と 本家",
+            ),
+            ("![図](a.png)", "![図]()"),
+            ("![図][1]", "![図][]"),
+            (
+                "前 ![図](a.png) と [リンク](b.md) 後",
+                "前 ![図]() と リンク 後",
+            ),
+            ("`[a](b)`", "`[a](b)`"),
+            ("<https://example.com>", "<https://example.com>"),
+        ];
+        for (content, expected) in cases {
+            assert_eq!(strip_links(content), expected, "{content:?}");
+        }
+    }
+
+    #[test]
+    fn strips_link_reference_definitions() {
+        let cases = [
+            ("本文\n[1]: https://example.com\n", "本文\n"),
+            ("[1]: https://example.com \"title\"\n本文\n", "本文\n"),
+            ("   [label]: <https://example.com>\n", ""),
+            (
+                "    [label]: https://example.com\n",
+                "    [label]: https://example.com\n",
+            ),
+            (
+                "```\n[1]: https://example.com\n```\n",
+                "```\n[1]: https://example.com\n```\n",
+            ),
+            ("[]: x\n", "[]: x\n"),
+            ("[a] b: c\n", "[a] b: c\n"),
+        ];
+        for (content, expected) in cases {
+            assert_eq!(strip_links(content), expected, "{content:?}");
         }
     }
 

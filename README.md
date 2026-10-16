@@ -16,7 +16,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 - 監査や計測の記録（`docs/audit/`、`docs/audits/`、`docs/benchmarks/`、`docs/benchmark/` 以下のすべてのファイル。どの深さの `docs/` でも、`docs/<モジュール>/` でもよい）も、コミット済みのものは変更・削除・移動できない（[ADR 0013](docs/adr/0013-protect-audit-and-benchmark-records.md)、[0014](docs/adr/0014-directory-name-variants.md)）。`--allow-status` と `--allow-links` は記録には効かない。記録を直す場合は、新しい記録を作成する。
 - ADRは、行頭が `ステータス:` か `Status:` のステータスの行をちょうど1つ持つ（[ADR 0012](docs/adr/0012-status-line-and-status-adt.md)）。`- Status:` や `status:` は認めない。ステータスの行が無い、または2つ以上あるADRは違反になる。
 - ステータスの値は、`提案`／`Proposed`、`採択`／`Accepted`、`採択→…`／`Superseded by …`、`却下`／`Rejected`、`破棄`／`Discarded`、`廃止`／`Deprecated` として解釈する。どれにも当たらない値も違反にはしない。
-- コミット済みのADRは変更できない。ただし、検査に `--allow-status` を付けるとステータスの行の変更を、`--allow-links` を付けるとADRの参照のリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
+- コミット済みのADRは変更できない。ただし、検査に `--allow-status` を付けるとステータスの行の変更を、`--allow-links` を付けるとリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
 - コミット済みのADRは、削除・リネームできない。
 - 新しいADRの追加と、未コミットのADRの編集は自由にできる。
 - `docs/adr/` から `docs/<モジュール>/adr/` への移動も、コミット済みのADRの移動として拒否する。移す場合は、新しい場所に新しいADRを作成する。
@@ -37,7 +37,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 | `adr-guard --help`、`-h` | ヘルプを表示する。AIがヘルプだけで使い方を把握できるよう、規則、各サブコマンドの出力の形と終了コード、例まで載せている |
 
 - `--allow-status`：コミット済みのADRで、ステータスの行の変更を許可する（`pre-commit`、`claude-hook`、`check-range`）。値の変更、見出しの変更（`Status:` から `ステータス:` など）、ステータスの行が無かったADRへの1行の追加が許可される。付けないと、ステータスの行も変更できない。
-- `--allow-links`：コミット済みのADRで、ADRの参照のリンクだけが異なる変更（リンクを付ける・外す・リンク先を変える）を許可する。
+- `--allow-links`：コミット済みのADRで、リンクだけが異なる変更を許可する（[ADR 0009](docs/adr/0009-require-links-for-adr-references.md)、[0015](docs/adr/0015-allow-link-changes.md)）。ADRの参照に限らず、リンク（インライン・参照形式）を付ける・外す・リンク先を変える変更と、画像のリンク先やリンクの参照定義の行（`[1]: URL`）の変更が通る。リンクのテキストの変更、画像の追加・削除、自動リンク（`<URL>`）と本文のURLの変更は通らない。
 - オプションは、サブコマンドの後ろならどの位置に置いてもよい。
 
 レビュー待ちのADRを開く例：
@@ -181,7 +181,7 @@ v0.7.0 から、ステータスの行が無いADRと、2つ以上あるADRは、
 
 ### 意図してADRや記録を書きかえる場合
 
-ADRの参照にリンクを付けるだけなら、上の `--allow-links` を使う。
+リンクを付ける・外す・リンク先を直すだけなら、上の `--allow-links` を使う。
 記録（`docs/audit/`、`docs/audits/`、`docs/benchmarks/`、`docs/benchmark/`）には例外が無いため、誤記を直す場合なども次の手段が要る。`adr-guard links --fix --include-committed` でコミット済みの記録のリンクを直した場合も同じ。
 次の手段は、それ以外の書きかえのための緊急用であり、通常は使わない。
 
