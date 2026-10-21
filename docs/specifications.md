@@ -18,6 +18,7 @@
 - ステータスの値（コロンより後ろの、前後の空白を除いた元の値）は、次の状態として解釈する。日本語は先頭の一致、英語は大文字と小文字を区別せずキーワードの直後が英数字でないときに当たる。どれにも当たらない値は `Unknown` とし、違反にはしない。
   - `提案…`、`Proposed`：Proposed
   - `採択` に0個以上の空白と `→` が続くもの、`Superseded…`：Superseded（後ろの「変わった部分」と変更したADRの番号を解析する。分類には影響しない）
+  - `採択` の直後に開き括弧（`（` か `(`）、`未実装`、閉じ括弧（`）` か `)`）が続くもの、`Accepted (not implemented)`（`Accepted` の後の半角の空白は1つあってもなくてもよく、括弧の揺れも同じ）：AcceptedNotImplemented（[ADR 0016](adr/0016-accepted-not-implemented-status.md)）。Superseded と Accepted より先に判定する。
   - `採択…`、`Accepted`：Accepted
   - `却下…`、`Rejected`：Rejected
   - `破棄…`、`Discarded`：Discarded
@@ -52,7 +53,7 @@
 ### サブコマンド
 
 - オプションは、サブコマンドの後ろならどの位置に置いてもよい。同じオプションを2回付けた場合や、受け付けないオプションを付けた場合は引数の誤りとする。
-- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit [--allow-status] [--allow-links]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] <base> <head>|list [--status]|proposed [--status]|links [--fix [--include-committed]]|check-status|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
+- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit [--allow-status] [--allow-links]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
 - `adr-guard --version`、`adr-guard -V`（[ADR 0003](adr/0003-version-and-help-options.md)）
   - `adr-guard <Cargo.toml の version>` の1行を標準出力に表示し、終了コード0で終わる。
 - `adr-guard --help`、`adr-guard -h`（[ADR 0003](adr/0003-version-and-help-options.md)）
@@ -83,7 +84,10 @@
   - `--include-committed`（`--fix` と一緒にだけ使える）では、コミット済みのADRも書きかえる。
 - `adr-guard check-status`（[ADR 0012](adr/0012-status-line-and-status-adt.md)）
   - 作業ツリーのすべてのADR（`.md`）のステータスの行の数を検査し、違反を `check-status: ` に続けて標準エラーに表示する。違反があれば終了コード1、無ければ終了コード0で終わる。
-- `list` と `proposed` と `links` と `check-status` で共通
+- `adr-guard unimplemented [--status]`（[ADR 0016](adr/0016-accepted-not-implemented-status.md)）
+  - ステータスの行がちょうど1つあり、その状態が AcceptedNotImplemented のADRのパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
+  - `--status` では、`<ステータス><タブ><パス>` の形で出力する。ステータスは元の値のまま。
+- `list` と `proposed` と `unimplemented` と `links` と `check-status` で共通
   - 対象は、`git ls-files --cached --others --exclude-standard` で列挙される（追跡されているか、追跡されていないが無視もされていない）ファイルのうち、ADRのディレクトリ以下にあって拡張子が `.md` で、作業ツリーに存在するもの。未コミットのADRも含む。
   - パスはリポジトリのルートからの相対パスで、昇順に並べる。どのディレクトリで実行しても同じ出力になる。
   - 該当が無ければ何も出力せずに終了コード0、gitのリポジトリの外などファイルを列挙できなければ終了コード1で終わる。

@@ -15,7 +15,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 - 設定は不要。モノレポでモジュールごとにADRを分けても、導入の手順は変わらない。
 - 監査や計測の記録（`docs/audit/`、`docs/audits/`、`docs/benchmarks/`、`docs/benchmark/` 以下のすべてのファイル。どの深さの `docs/` でも、`docs/<モジュール>/` でもよい）も、コミット済みのものは変更・削除・移動できない（[ADR 0013](docs/adr/0013-protect-audit-and-benchmark-records.md)、[0014](docs/adr/0014-directory-name-variants.md)）。`--allow-status` と `--allow-links` は記録には効かない。記録を直す場合は、新しい記録を作成する。
 - ADRは、行頭が `ステータス:` か `Status:` のステータスの行をちょうど1つ持つ（[ADR 0012](docs/adr/0012-status-line-and-status-adt.md)）。`- Status:` や `status:` は認めない。ステータスの行が無い、または2つ以上あるADRは違反になる。
-- ステータスの値は、`提案`／`Proposed`、`採択`／`Accepted`、`採択→…`／`Superseded by …`、`却下`／`Rejected`、`破棄`／`Discarded`、`廃止`／`Deprecated` として解釈する。どれにも当たらない値も違反にはしない。
+- ステータスの値は、`提案`／`Proposed`、`採択`／`Accepted`、`採択（未実装）`／`Accepted (not implemented)`（括弧は全角でも半角でもよい。[ADR 0016](docs/adr/0016-accepted-not-implemented-status.md)）、`採択→…`／`Superseded by …`、`却下`／`Rejected`、`破棄`／`Discarded`、`廃止`／`Deprecated` として解釈する。どれにも当たらない値も違反にはしない。
 - コミット済みのADRは変更できない。ただし、検査に `--allow-status` を付けるとステータスの行の変更を、`--allow-links` を付けるとリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
 - コミット済みのADRは、削除・リネームできない。
 - 新しいADRの追加と、未コミットのADRの編集は自由にできる。
@@ -31,6 +31,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 | `adr-guard check-range <base> <head> [--allow-status] [--allow-links]` | `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。`<base>` が無いコミットならルートコミットから検査する |
 | `adr-guard list [--status]` | 作業ツリーにあるADR（未コミットのものも含む）のパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する（ステータスの行が無ければステータスは空） |
 | `adr-guard proposed [--status]` | ステータスが提案（`提案…` か `Proposed`）のADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
+| `adr-guard unimplemented [--status]` | ステータスが `採択（未実装）`（か `Accepted (not implemented)`）の、採択されたがまだ実装されていないADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
 | `adr-guard links [--fix [--include-committed]]` | 作業ツリーの `.md` にある、リンクの無いADRの参照を報告する。`--fix` でリンクに置きかえる（コミット済みのADRは `--include-committed` を付けたときだけ） |
 | `adr-guard check-status` | 作業ツリーのすべてのADRについて、ステータスの行がちょうど1つあるかを検査する |
 | `adr-guard --version`、`-V` | バージョンを表示する |

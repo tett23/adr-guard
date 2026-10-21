@@ -1849,3 +1849,104 @@ mod link_changes {
         );
     }
 }
+
+mod unimplemented {
+    use super::*;
+
+    /// ADR 0016 の結合テストの一時リポジトリ。
+    fn unimplemented_repo() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]);
+        git(p, &["config", "user.name", "test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+        for (path, status) in [
+            ("docs/adr/0001-a.md", "ステータス: 採択（未実装）"),
+            ("docs/adr/0002-b.md", "ステータス: 採択(未実装)"),
+            ("docs/adr/0003-c.md", "Status: Accepted (not implemented)"),
+            ("docs/adr/0004-d.md", "ステータス: 採択"),
+            ("docs/adr/0005-e.md", "ステータス: 提案"),
+        ] {
+            write(p, path, &format!("# ADR\n\n{status}\n\n本文\n"));
+        }
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "--no-verify", "-m", "init"]);
+        dir
+    }
+
+    fn run(dir: &Path, args: &[&str]) -> (i32, String) {
+        let output = Command::new(BIN)
+            .args(args)
+            .current_dir(dir)
+            .env_remove("ADR_GUARD_ALLOW")
+            .stderr(Stdio::null())
+            .output()
+            .unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stdout).unwrap(),
+        )
+    }
+
+    #[test]
+    fn lists_unimplemented_adrs() {
+        let dir = unimplemented_repo();
+        assert_eq!(
+            run(dir.path(), &["unimplemented"]),
+            (
+                0,
+                "docs/adr/0001-a.md\ndocs/adr/0002-b.md\ndocs/adr/0003-c.md\n".to_owned()
+            )
+        );
+        assert_eq!(
+            run(dir.path(), &["unimplemented", "--status"]),
+            (
+                0,
+                "採択（未実装）\tdocs/adr/0001-a.md\n採択(未実装)\tdocs/adr/0002-b.md\nAccepted (not implemented)\tdocs/adr/0003-c.md\n"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            run(dir.path(), &["proposed"]),
+            (0, "docs/adr/0005-e.md\n".to_owned())
+        );
+    }
+
+    #[test]
+    fn prints_nothing_without_unimplemented_adrs() {
+        let dir = repo();
+        assert_eq!(run(dir.path(), &["unimplemented"]), (0, String::new()));
+        let outside = TempDir::new().unwrap();
+        assert_eq!(run(outside.path(), &["unimplemented"]).0, 1);
+    }
+
+    #[test]
+    fn rejects_wrong_arguments() {
+        let dir = repo();
+        for args in [&["unimplemented", "x"][..], &["unimplemented", "--fix"]] {
+            assert_eq!(run(dir.path(), args).0, 64, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn help_mentions_unimplemented() {
+        let (_, stdout) = run(Path::new("."), &["--help"]);
+        for word in ["unimplemented", "採択（未実装）"] {
+            assert!(stdout.contains(word), "{word}: {stdout}");
+        }
+    }
+
+    #[test]
+    fn allow_status_permits_marking_as_implemented() {
+        let dir = unimplemented_repo();
+        let p = dir.path();
+        write(
+            p,
+            "docs/adr/0001-a.md",
+            "# ADR\n\nステータス: 採択\n\n本文\n",
+        );
+        git(p, &["add", "-A"]);
+        assert_eq!(run(p, &["pre-commit", "--allow-status"]).0, 0);
+    }
+}
