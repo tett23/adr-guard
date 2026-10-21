@@ -6,6 +6,7 @@
 //! - `adr-guard claude-hook [--allow-status]`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
 //! - `adr-guard check-range [--allow-status] [--allow-links] <base> <head>`: CIで、範囲内の各コミットを検査する。
 //! - `adr-guard list [--status]`、`adr-guard proposed [--status]`: ADRと、ステータスが提案のADRを一覧する（ADR 0005、0006、0007）。
+//! - `adr-guard unimplemented [--status]`: ステータスが `採択（未実装）` のADRを一覧する（ADR 0016）。
 //! - `adr-guard links [--fix [--include-committed]]`: リンクの無いADRの参照を検査・修正する（ADR 0009）。
 //! - `adr-guard check-status`: ADRのステータスの行（`ステータス:` か `Status:`）がちょうど1つあるか検査する（ADR 0012）。
 //! - `adr-guard --version`、`adr-guard --help`: バージョンとヘルプを表示する（ADR 0003、0009）。
@@ -26,7 +27,7 @@ const ALLOW_ENV: &str = "ADR_GUARD_ALLOW";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
 const RECORD_ADVICE: &str = "記録を直す場合は、新しい記録を作成してください。";
 const LINKS_ADVICE: &str = "adr-guard links --fix で修正できます。コミット済みのADRは --fix --include-committed で修正し、検査に --allow-links を付けてコミットしてください。";
-const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] <base> <head>|list [--status]|proposed [--status]|links [--fix [--include-committed]]|check-status|--version|--help>";
+const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|--version|--help>";
 const HELP: &str = "\
 コミット済みのADR（Architecture Decision Record）を変更できないようにするツール。
 ステータスの行の変更（--allow-status）と、リンクだけの変更（--allow-links）は、オプションで許可できる。
@@ -43,6 +44,9 @@ ADRとステータス:
   値は次の状態として解釈する（英語は大文字・小文字を区別しない）。どれにも当たらない値も違反にはしない:
     提案…、Proposed                         Proposed: レビュー待ち。コミットせずに置く
     採択…、Accepted                         Accepted: 採択済み
+    採択（未実装）…、
+    Accepted (not implemented)              AcceptedNotImplemented: 採択されたが、まだ実装されていない。
+                                            括弧は全角（）でも半角()でもよい
     採択→<変わった部分>は[ADR NNNN](...)、
     Superseded by ADR NNNN                  Superseded: 一部または全部が後のADRで変更された
     却下…、Rejected                         Rejected: 採択されなかった
@@ -100,6 +104,13 @@ ADRとステータス:
   adr-guard proposed [--status]
     ステータスが Proposed（「提案…」か「Proposed」）のADRのパスを、1行に1つずつ標準出力に出力する。
     レビュー待ちのADRを探すのに使う。
+    --status  「<ステータス><タブ><パス>」の形で出力する。
+    終了コード: 0 成功（該当なしでも0）、1 gitのリポジトリの外など
+
+  adr-guard unimplemented [--status]
+    ステータスが AcceptedNotImplemented（「採択（未実装）…」か「Accepted (not implemented)」）のADRのパスを、
+    1行に1つずつ標準出力に出力する。採択されたがまだ実装されていないADRを探し、実装するのに使う。
+    実装したら、ステータスの行を「採択」に書きかえる（--allow-status で許可される）。
     --status  「<ステータス><タブ><パス>」の形で出力する。
     終了コード: 0 成功（該当なしでも0）、1 gitのリポジトリの外など
 
@@ -187,6 +198,9 @@ enum Subcommand<'a> {
     Proposed {
         status: bool,
     },
+    Unimplemented {
+        status: bool,
+    },
     Links {
         fix: bool,
         include_committed: bool,
@@ -206,7 +220,7 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
     let accepted: &[&str] = match command.as_str() {
         "pre-commit" | "check-range" => &["--allow-status", "--allow-links"],
         "claude-hook" => &["--allow-status"],
-        "list" | "proposed" => &["--status"],
+        "list" | "proposed" | "unimplemented" => &["--status"],
         "links" => &["--fix", "--include-committed"],
         _ => &[],
     };
@@ -224,6 +238,9 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
         ("claude-hook", []) => Some(Subcommand::ClaudeHook { allow }),
         ("check-range", [base, head]) => Some(Subcommand::CheckRange { base, head, allow }),
         ("list", []) => Some(Subcommand::List {
+            status: has("--status"),
+        }),
+        ("unimplemented", []) => Some(Subcommand::Unimplemented {
             status: has("--status"),
         }),
         ("proposed", []) => Some(Subcommand::Proposed {
@@ -248,6 +265,7 @@ fn main() -> ExitCode {
         Some(Subcommand::CheckRange { base, head, allow }) => check_range(base, head, allow),
         Some(Subcommand::List { status }) => list(status),
         Some(Subcommand::Proposed { status }) => proposed(status),
+        Some(Subcommand::Unimplemented { status }) => unimplemented(status),
         Some(Subcommand::Links {
             fix,
             include_committed,
@@ -778,6 +796,13 @@ fn print_adrs(
 
 fn list(with_status: bool) -> ExitCode {
     print_adrs("list", with_status, |_| true)
+}
+
+/// `adr-guard unimplemented [--status]`：ステータスが `採択（未実装）` のADRを一覧する（ADR 0016）。
+fn unimplemented(with_status: bool) -> ExitCode {
+    print_adrs("unimplemented", with_status, |line| {
+        line.is_some_and(|line| line.status == status::Status::AcceptedNotImplemented)
+    })
 }
 
 fn proposed(with_status: bool) -> ExitCode {

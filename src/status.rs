@@ -24,8 +24,10 @@ pub struct StatusLine<'a> {
 pub enum Status {
     /// `提案…`、`Proposed`。レビュー待ち
     Proposed,
-    /// `採択…`（`採択→` で始まるものを除く）、`Accepted`
+    /// `採択…`（`採択→`、`採択（未実装）` で始まるものを除く）、`Accepted`
     Accepted,
+    /// `採択（未実装）…`、`Accepted (not implemented)`。採択されたが、まだ実装されていない（ADR 0016）
+    AcceptedNotImplemented,
     /// `採択→…`、`Superseded by …`。一部または全部が後のADRで変更された
     Superseded(Vec<Change>),
     /// `却下…`、`Rejected`
@@ -118,10 +120,38 @@ fn superseded_ja(raw: &str) -> Option<&str> {
     raw.strip_prefix("採択")?.trim_start().strip_prefix('→')
 }
 
+/// 括弧（全角か半角）で囲んだ `inner` で始まるか（ADR 0016）。`ignore_case` なら英字の大文字と小文字を区別しない。
+fn bracketed(text: &str, inner: &str, ignore_case: bool) -> bool {
+    let Some(rest) = text.strip_prefix(['（', '(']) else {
+        return false;
+    };
+    let Some(head) = rest.get(..inner.len()) else {
+        return false;
+    };
+    let same = if ignore_case {
+        head.eq_ignore_ascii_case(inner)
+    } else {
+        head == inner
+    };
+    same && rest[inner.len()..].starts_with(['）', ')'])
+}
+
+/// `採択（未実装）…` か `Accepted (not implemented)…` か（ADR 0016）。
+/// 英語では、`Accepted` と括弧の間の半角の空白は1つあってもなくてもよい（`Accepted（not implemented）`）。
+fn accepted_not_implemented(raw: &str) -> bool {
+    raw.strip_prefix("採択")
+        .is_some_and(|rest| bracketed(rest, "未実装", false))
+        || english(raw, "accepted")
+            .map(|rest| rest.strip_prefix(' ').unwrap_or(rest))
+            .is_some_and(|rest| bracketed(rest, "not implemented", true))
+}
+
 /// 元の値を状態に変換する。
 pub fn parse(raw: &str) -> Status {
     if raw.starts_with("提案") {
         Status::Proposed
+    } else if accepted_not_implemented(raw) {
+        Status::AcceptedNotImplemented
     } else if let Some(rest) = superseded_ja(raw) {
         Status::Superseded(changes_ja(rest))
     } else if raw.starts_with("採択") {
@@ -323,6 +353,37 @@ mod tests {
         );
         assert!(count_violations("a.md", "ステータス: 採択\n").is_empty());
         assert_eq!(status("x\n\nStatus: Accepted\n").map(|s| s.line), Some(3));
+    }
+
+    #[test]
+    fn parses_accepted_not_implemented() {
+        // ADR 0016 の表
+        for raw in [
+            "採択（未実装）",
+            "採択(未実装)",
+            "採択（未実装)",
+            "採択(未実装）",
+            "採択（未実装）。実装は別のリポジトリ",
+            "Accepted (not implemented)",
+            "accepted (Not Implemented)",
+            "Accepted（not implemented）",
+        ] {
+            assert_eq!(parse(raw), Status::AcceptedNotImplemented, "{raw:?}");
+        }
+        for raw in [
+            "採択",
+            "採択（2026-10-01）",
+            "採択 （未実装）",
+            "採択（ 未実装 ）",
+            "採択【未実装】",
+        ] {
+            assert_eq!(parse(raw), Status::Accepted, "{raw:?}");
+        }
+        assert!(matches!(
+            parse("採択→[ADR 0002](0002-x.md)"),
+            Status::Superseded(_)
+        ));
+        assert_eq!(parse("未実装"), Status::Unknown);
     }
 
     #[test]
