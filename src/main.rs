@@ -1026,7 +1026,12 @@ fn renumber(dry_run: bool) -> ExitCode {
             fixed += count;
         }
         let candidates = links::candidate_dirs(&path);
+        // ADR自身の番号（タイトルの行など）は参照ではない（ADR 0009）
+        let own = adr_number(&path).map(str::to_owned);
         for (line, number) in links::unlinked_numbers(&rewritten) {
+            if own.as_deref() == Some(number.as_str()) {
+                continue;
+            }
             let ambiguous = renames
                 .iter()
                 .any(|rename| rename.old_number == number && candidates.contains(&rename.dir));
