@@ -7,11 +7,13 @@
 //! - `adr-guard check-range [--allow-status] [--allow-links] <base> <head>`: CIで、範囲内の各コミットを検査する。
 //! - `adr-guard list [--status]`、`adr-guard proposed [--status]`: ADRと、ステータスが提案のADRを一覧する（ADR 0005、0006、0007）。
 //! - `adr-guard unimplemented [--status]`: ステータスが `採択（未実装）` のADRを一覧する（ADR 0016）。
+//! - `adr-guard check-numbers`、`adr-guard renumber [--dry-run]`: ADRの番号の重複を検査・修復する（ADR 0018）。
 //! - `adr-guard links [--fix [--include-committed]]`: リンクの無いADRの参照を検査・修正する（ADR 0009）。
 //! - `adr-guard check-status`: ADRのステータスの行（`ステータス:` か `Status:`）がちょうど1つあるか検査する（ADR 0012）。
 //! - `adr-guard --version`、`adr-guard --help`: バージョンとヘルプを表示する（ADR 0003、0009）。
 
 mod links;
+mod numbers;
 mod status;
 
 use std::collections::HashSet;
@@ -27,7 +29,7 @@ const ALLOW_ENV: &str = "ADR_GUARD_ALLOW";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
 const RECORD_ADVICE: &str = "記録を直す場合は、新しい記録を作成してください。";
 const LINKS_ADVICE: &str = "adr-guard links --fix で修正できます。コミット済みのADRは --fix --include-committed で修正し、検査に --allow-links を付けてコミットしてください。";
-const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|--version|--help>";
+const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links] [--allow-renumber]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] [--allow-renumber] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|check-numbers|renumber [--dry-run]|--version|--help>";
 const HELP: &str = "\
 コミット済みのADR（Architecture Decision Record）を変更できないようにするツール。
 ステータスの行の変更（--allow-status）と、リンクだけの変更（--allow-links）は、オプションで許可できる。
@@ -72,7 +74,7 @@ ADRとステータス:
     参照先のADRが見つからない番号は検査しない。
 
 サブコマンド:
-  adr-guard pre-commit [--allow-status] [--allow-links]
+  adr-guard pre-commit [--allow-status] [--allow-links] [--allow-renumber]
     gitのpre-commit hookから呼ぶ。ステージされた変更を検査する。
       - コミット済みのADRの変更（オプションで許可したものを除く）・削除・移動を拒否する。
       - ステージされた .md のファイルの、リンクの無いADRの参照を拒否する。
@@ -82,6 +84,10 @@ ADRとステータス:
                     リンク（インライン・参照形式）を付ける・外す・リンク先を変える変更と、画像のリンク先・
                     リンクの参照定義の行（[1]: URL）の変更が通る。リンクのテキストの変更、画像の追加・削除、
                     自動リンク（<URL>）と本文のURLの変更は通らない。
+    --allow-renumber  adr-guard renumber で行った、重複した番号の振りなおしを許可する。削除と追加の組で、
+                    ディレクトリとファイル名の番号の後ろが同じ、変更前に番号が重複していた、内容がタイトルの
+                    番号を除いて同じ、のすべてを満たすもの。同じ変更のほかのADRでは、リンクのテキストの
+                    新しい番号を古い番号に読みかえてから比較する。
     終了コード: 0 問題なし、1 違反あり
 
   adr-guard claude-hook [--allow-status]
@@ -90,10 +96,10 @@ ADRとステータス:
     --allow-status  ステータスの行だけを変える編集を許可する。
     終了コード: 0 許可、2 拒否（理由を標準エラーに表示）
 
-  adr-guard check-range <base> <head> [--allow-status] [--allow-links]
+  adr-guard check-range <base> <head> [--allow-status] [--allow-links] [--allow-renumber]
     CIから呼ぶ。<base>..<head> のマージ以外の各コミットを、親コミットとの差分で検査する。
     <base> がコミットとして存在しなければ（0000... など）、<head> から辿れるすべてのコミットを検査する。
-    --allow-status, --allow-links  pre-commit と同じ。
+    --allow-status, --allow-links, --allow-renumber  pre-commit と同じ。
     終了コード: 0 問題なし、1 違反あり
 
   adr-guard list [--status]
@@ -125,6 +131,19 @@ ADRとステータス:
     作業ツリーのすべてのADR（.md）について、ステータスの行がちょうど1つあるかを検査し、違反を標準エラーに表示する。
     CIから呼ぶ。
     終了コード: 0 違反なし、1 違反あり
+
+  adr-guard check-numbers
+    作業ツリーの各ADRのディレクトリの直下で、同じ番号（ファイル名の先頭の4桁）のADRが2つ以上ないかを検査する。
+    別々のブランチで同じ番号のADRを作ってマージしたときに起きる。CIから呼ぶ。
+    終了コード: 0 重複なし、1 重複あり
+
+  adr-guard renumber [--dry-run]
+    番号の重複を、番号を振りなおして修復する。履歴で先に追加されたADRの番号を残し、ほかのADRに
+    ディレクトリの最大の番号の次の番号を割り当てる。ファイル名とタイトルの行（# ADR NNNN:）の番号を変え、
+    すべての .md（記録を除く）のリンクのうち、振りなおしたADRを指すもののリンク先と、テキストの番号を直す。
+    リンクの無い ADR NNNN は直さず、警告を表示する。git mv はしない。コミットには --allow-renumber が要る。
+    --dry-run  ファイルを変えず、振りなおしの一覧だけを表示する。
+    終了コード: 0 成功（重複なしでも0）、1 書きかえの失敗など
 
   adr-guard --version, -V   「adr-guard <バージョン>」を表示する
   adr-guard --help, -h      このヘルプを表示する
@@ -158,6 +177,11 @@ ADRとステータス:
   adr-guard check-range --allow-status --allow-links \"$BASE_SHA\" \"$HEAD_SHA\"
   adr-guard links
   adr-guard check-status
+  adr-guard check-numbers
+
+  # 重複したADRの番号を直してコミットする（pre-commit hookに --allow-renumber が要る）
+  adr-guard renumber
+  git add -A && git commit
 
   # レビュー待ちのADRを開く
   adr-guard proposed | xargs \"$EDITOR\"
@@ -178,6 +202,8 @@ struct Allow {
     status: bool,
     /// リンクだけの変更（`--allow-links`。ADR 0009、0015）
     links: bool,
+    /// 重複した番号の振りなおし（`--allow-renumber`。ADR 0018）
+    renumber: bool,
 }
 
 enum Subcommand<'a> {
@@ -206,6 +232,10 @@ enum Subcommand<'a> {
         include_committed: bool,
     },
     CheckStatus,
+    CheckNumbers,
+    Renumber {
+        dry_run: bool,
+    },
     Version,
     Help,
 }
@@ -218,7 +248,8 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
         .map(String::as_str)
         .partition(|arg| arg.starts_with("--"));
     let accepted: &[&str] = match command.as_str() {
-        "pre-commit" | "check-range" => &["--allow-status", "--allow-links"],
+        "pre-commit" | "check-range" => &["--allow-status", "--allow-links", "--allow-renumber"],
+        "renumber" => &["--dry-run"],
         "claude-hook" => &["--allow-status"],
         "list" | "proposed" | "unimplemented" => &["--status"],
         "links" => &["--fix", "--include-committed"],
@@ -232,6 +263,7 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
     let allow = Allow {
         status: has("--allow-status"),
         links: has("--allow-links"),
+        renumber: has("--allow-renumber"),
     };
     match (command.as_str(), positional.as_slice()) {
         ("pre-commit", []) => Some(Subcommand::PreCommit { allow }),
@@ -251,6 +283,10 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
             include_committed: has("--include-committed"),
         }),
         ("check-status", []) => Some(Subcommand::CheckStatus),
+        ("check-numbers", []) => Some(Subcommand::CheckNumbers),
+        ("renumber", []) => Some(Subcommand::Renumber {
+            dry_run: has("--dry-run"),
+        }),
         ("--version" | "-V", []) => Some(Subcommand::Version),
         ("--help" | "-h", []) => Some(Subcommand::Help),
         _ => None,
@@ -271,6 +307,8 @@ fn main() -> ExitCode {
             include_committed,
         }) => links(fix, include_committed),
         Some(Subcommand::CheckStatus) => check_status(),
+        Some(Subcommand::CheckNumbers) => check_numbers(),
+        Some(Subcommand::Renumber { dry_run }) => renumber(dry_run),
         Some(Subcommand::Version) => {
             println!("{}", version());
             ExitCode::SUCCESS
@@ -406,18 +444,43 @@ fn violations(
         .map(|f| String::from_utf8_lossy(f).into_owned())
         .collect();
 
+    let entries: Vec<(&str, &str)> = fields
+        .chunks(2)
+        .filter_map(|pair| match pair {
+            [status, path] => Some((status.as_str(), path.as_str())),
+            _ => None,
+        })
+        .collect();
+    let renumbered = if allow.renumber {
+        renumber_pairs(&entries, old_ref, new_ref, allow, cwd)
+    } else {
+        Vec::new()
+    };
+    let mapping: Vec<(String, String)> = renumbered
+        .iter()
+        .map(|(_, _, old, new)| (new.clone(), old.clone()))
+        .collect();
+
     let mut violations = Vec::new();
-    for pair in fields.chunks(2) {
-        let [status, path] = pair else { continue };
+    for &(status, path) in &entries {
+        if renumbered.iter().any(|(deleted, ..)| deleted == path) {
+            continue;
+        }
         let record = is_record_path(path);
         if !is_adr_path(path) && !record {
             continue;
         }
-        let message = match (status.as_str(), record) {
+        let message = match (status, record) {
             ("A", _) => None,
             ("M", false) => {
                 let old = git(&["show", &format!("{old_ref}:{path}")], cwd).unwrap_or_default();
                 let new = git(&["show", &format!("{new_ref}:{path}")], cwd).unwrap_or_default();
+                let new = if mapping.is_empty() {
+                    new
+                } else {
+                    numbers::restore_link_texts(&String::from_utf8_lossy(&new), &mapping)
+                        .into_bytes()
+                };
                 (!allowed_change(&old, &new, allow)).then(|| change_violation(path, allow))
             }
             ("M", true) => Some(record_change_violation(path)),
@@ -431,6 +494,64 @@ fn violations(
         }
     }
     violations
+}
+
+/// 削除と追加の組のうち、番号の振りなおし（ADR 0018）とみなせるもの。
+/// （削除されたパス、追加されたパス、古い番号、新しい番号）の一覧。
+fn renumber_pairs(
+    entries: &[(&str, &str)],
+    old_ref: &str,
+    new_ref: &str,
+    allow: Allow,
+    cwd: &Path,
+) -> Vec<(String, String, String, String)> {
+    let split = |path: &str| -> Option<(String, String, String)> {
+        let (dir, file) = path.rsplit_once('/')?;
+        let (number, name) = numbers::split_file_name(file)?;
+        is_adr_path(path).then(|| (dir.to_owned(), number.to_owned(), name.to_owned()))
+    };
+    let added: Vec<(&str, (String, String, String))> = entries
+        .iter()
+        .filter(|(status, _)| *status == "A")
+        .filter_map(|(_, path)| split(path).map(|parts| (*path, parts)))
+        .collect();
+    entries
+        .iter()
+        .filter(|(status, _)| *status == "D")
+        .filter_map(|(_, deleted)| {
+            let (dir, old_number, name) = split(deleted)?;
+            let (new_path, (_, new_number, _)) = added
+                .iter()
+                .find(|(_, (d, n, rest))| *d == dir && *rest == name && *n != old_number)?;
+            // 変更前に、同じ番号のADRがほかにもあった（重複していた）
+            let listing = git(
+                &["ls-tree", "--name-only", old_ref, &format!("{dir}/")],
+                cwd,
+            )?;
+            let same_number = String::from_utf8_lossy(&listing)
+                .lines()
+                .filter_map(|line| line.rsplit('/').next())
+                .filter_map(numbers::split_file_name)
+                .filter(|(number, _)| *number == old_number)
+                .count();
+            if same_number < 2 {
+                return None;
+            }
+            // タイトルの行の番号を除いて、内容が同じ
+            let old = git(&["show", &format!("{old_ref}:{deleted}")], cwd)?;
+            let new = git(&["show", &format!("{new_ref}:{new_path}")], cwd)?;
+            let new =
+                numbers::rewrite_title(&String::from_utf8_lossy(&new), new_number, &old_number);
+            allowed_change(&old, new.as_bytes(), allow).then(|| {
+                (
+                    (*deleted).to_owned(),
+                    (*new_path).to_owned(),
+                    old_number.clone(),
+                    new_number.clone(),
+                )
+            })
+        })
+        .collect()
 }
 
 fn pre_commit(allow: Allow) -> ExitCode {
@@ -811,6 +932,115 @@ fn proposed(with_status: bool) -> ExitCode {
     })
 }
 
+/// `adr-guard check-numbers`：作業ツリーのADRの番号の重複を検査する（ADR 0018）。
+fn check_numbers() -> ExitCode {
+    let Some((_, paths)) = adr_files() else {
+        eprintln!("check-numbers: ADRを列挙できませんでした");
+        return ExitCode::FAILURE;
+    };
+    let found = numbers::duplicates(&paths);
+    for duplicate in &found {
+        eprintln!(
+            "check-numbers: {}: ADR {} が重複しています: {}",
+            duplicate.dir,
+            duplicate.number,
+            duplicate.files.join(", ")
+        );
+    }
+    if found.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    eprintln!("adr-guard renumber で修復できます。");
+    ExitCode::FAILURE
+}
+
+/// ADRが最初に追加されたコミットの時刻。未コミットならNone。
+fn added_at(root: &Path, path: &str) -> Option<i64> {
+    let out = git(
+        &[
+            "log",
+            "--diff-filter=A",
+            "--format=%ct",
+            "--reverse",
+            "--",
+            path,
+        ],
+        root,
+    )?;
+    String::from_utf8_lossy(&out)
+        .lines()
+        .next()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// `adr-guard renumber [--dry-run]`：重複したADRの番号を振りなおす（ADR 0018）。
+fn renumber(dry_run: bool) -> ExitCode {
+    let Some((root, files)) = work_tree_files() else {
+        eprintln!("renumber: ADRを列挙できませんでした");
+        return ExitCode::FAILURE;
+    };
+    let adrs = adr_paths(&files);
+    let renames = numbers::plan(&adrs, |path| added_at(&root, path));
+    for rename in &renames {
+        eprintln!("{}: {} -> {}", rename.dir, rename.old_file, rename.new_file);
+    }
+    if renames.is_empty() || dry_run {
+        return ExitCode::SUCCESS;
+    }
+
+    for rename in &renames {
+        let old = root.join(rename.old_path());
+        let Ok(content) = std::fs::read_to_string(&old) else {
+            eprintln!("renumber: 読めませんでした: {}", rename.old_path());
+            return ExitCode::FAILURE;
+        };
+        let content = numbers::rewrite_title(&content, &rename.old_number, &rename.new_number);
+        if std::fs::write(root.join(rename.new_path()), content).is_err()
+            || std::fs::remove_file(&old).is_err()
+        {
+            eprintln!("renumber: 書きかえられませんでした: {}", rename.old_path());
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let docs = files
+        .iter()
+        .filter(|path| path.ends_with(".md") && !is_record_path(path));
+    let mut fixed = 0;
+    for path in docs {
+        let path = renames
+            .iter()
+            .find(|rename| rename.old_path() == *path)
+            .map_or(path.clone(), numbers::Rename::new_path);
+        let Ok(content) = std::fs::read_to_string(root.join(&path)) else {
+            continue;
+        };
+        let (rewritten, count) = numbers::rewrite_links(&path, &content, &renames);
+        if count > 0 {
+            if std::fs::write(root.join(&path), &rewritten).is_err() {
+                eprintln!("renumber: 書きかえられませんでした: {path}");
+                return ExitCode::FAILURE;
+            }
+            fixed += count;
+        }
+        let candidates = links::candidate_dirs(&path);
+        for (line, number) in links::unlinked_numbers(&rewritten) {
+            let ambiguous = renames
+                .iter()
+                .any(|rename| rename.old_number == number && candidates.contains(&rename.dir));
+            if ambiguous {
+                eprintln!(
+                    "{path}:{line}: ADR {number} はどちらのADRを指すか分からないため、直していません"
+                );
+            }
+        }
+    }
+    eprintln!("{fixed}件の参照を直しました");
+    ExitCode::SUCCESS
+}
+
 /// `adr-guard check-status`：作業ツリーのすべてのADRのステータスの行の数を検査する（ADR 0012）。
 fn check_status() -> ExitCode {
     let Some((root, paths)) = adr_files() else {
@@ -1079,18 +1309,22 @@ mod tests {
     const NONE: Allow = Allow {
         status: false,
         links: false,
+        renumber: false,
     };
     const STATUS: Allow = Allow {
         status: true,
         links: false,
+        renumber: false,
     };
     const LINKS: Allow = Allow {
         status: false,
         links: true,
+        renumber: false,
     };
     const BOTH: Allow = Allow {
         status: true,
         links: true,
+        renumber: false,
     };
 
     #[test]
@@ -1261,6 +1495,7 @@ mod tests {
             Allow {
                 status: true,
                 links: false,
+                renumber: false,
             },
         );
         assert!(record.contains("記録"), "{record}");

@@ -53,7 +53,7 @@
 ### サブコマンド
 
 - オプションは、サブコマンドの後ろならどの位置に置いてもよい。同じオプションを2回付けた場合や、受け付けないオプションを付けた場合は引数の誤りとする。
-- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit [--allow-status] [--allow-links]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
+- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit [--allow-status] [--allow-links] [--allow-renumber]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] [--allow-renumber] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|check-numbers|renumber [--dry-run]|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
 - `adr-guard --version`、`adr-guard -V`（[ADR 0003](adr/0003-version-and-help-options.md)）
   - `adr-guard <Cargo.toml の version>` の1行を標準出力に表示し、終了コード0で終わる。
 - `adr-guard --help`、`adr-guard -h`（[ADR 0003](adr/0003-version-and-help-options.md)）
@@ -87,7 +87,19 @@
 - `adr-guard unimplemented [--status]`（[ADR 0016](adr/0016-accepted-not-implemented-status.md)）
   - ステータスの行がちょうど1つあり、その状態が AcceptedNotImplemented のADRのパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
   - `--status` では、`<ステータス><タブ><パス>` の形で出力する。ステータスは元の値のまま。
-- `list` と `proposed` と `unimplemented` と `links` と `check-status` で共通
+- `adr-guard check-numbers`（[ADR 0018](adr/0018-repair-duplicate-adr-numbers.md)）
+  - 作業ツリーの各ADRのディレクトリの直下にある、ファイル名が `<4桁の数字>-` で始まる `.md` のADRについて、同じディレクトリで同じ番号のものが2つ以上あれば重複とする。別のディレクトリの同じ番号は重複としない。
+  - 重複ごとに `check-numbers: <ディレクトリ>: ADR <番号> が重複しています: <ファイル名>, <ファイル名>` を標準エラーに表示し、`adr-guard renumber で修復できます。` を表示して終了コード1で終わる。重複が無ければ終了コード0。pre-commit hookでは検査しない。
+- `adr-guard renumber [--dry-run]`（[ADR 0018](adr/0018-repair-duplicate-adr-numbers.md)）
+  - 重複した番号のADRのうち、`git log --diff-filter=A` で最初に追加されたコミットの時刻が最も早いもの（同じか未コミットならファイル名の昇順で先のもの）を残し、残りに、ディレクトリの最大の番号の次から順に番号を割り当てる。
+  - ファイル名の番号を変え（`<名前>` の部分は変えない）、1行目が `# ADR <旧番号>:` ならその番号を変える。`git mv` はしない。
+  - 作業ツリーの `.md`（記録を除く）のインラインのリンクのうち、リンク先（文書のディレクトリからの相対パス）が振りなおしたADRを指すものについて、リンク先のファイル名を変え、テキストが `ADR <旧番号>` か `<旧番号>` なら番号を変える。URLや絶対パスのリンク先は変えない。
+  - 振りなおしの一覧（`<ディレクトリ>: <旧ファイル名> -> <新ファイル名>`）と、直した参照の件数を標準エラーに表示する。リンクの無い参照のうち、振りなおした旧番号で、そのディレクトリが参照先の候補になるものは、`<パス>:<行>: ADR <番号> はどちらのADRを指すか分からないため、直していません` を表示する。
+  - `--dry-run` では、ファイルを変えずに一覧だけを表示する。重複が無ければ何もせずに終了コード0。
+- `--allow-renumber`（`pre-commit` と `check-range`。[ADR 0018](adr/0018-repair-duplicate-adr-numbers.md)）
+  - 削除されたADRと追加されたADRが同じディレクトリにあり、ファイル名の番号の後ろが同じで番号が違い、変更前の状態で削除されたADRの番号がそのディレクトリで重複しており、追加されたADRの内容がタイトルの行の番号を除いて削除されたADRの内容と同じ（`--allow-status`、`--allow-links` の正規化を含む）組を、番号の振りなおしとして違反にしない。
+  - 同じ変更のほかのADRの変更では、リンクのテキストの番号のうち、振りなおした新しい番号を古い番号に読みかえてから比較する。
+- `list` と `proposed` と `unimplemented` と `links` と `check-status` と `check-numbers` と `renumber` で共通
   - 対象は、`git ls-files --cached --others --exclude-standard` で列挙される（追跡されているか、追跡されていないが無視もされていない）ファイルのうち、ADRのディレクトリ以下にあって拡張子が `.md` で、作業ツリーに存在するもの。未コミットのADRも含む。
   - パスはリポジトリのルートからの相対パスで、昇順に並べる。どのディレクトリで実行しても同じ出力になる。
   - 該当が無ければ何も出力せずに終了コード0、gitのリポジトリの外などファイルを列挙できなければ終了コード1で終わる。
@@ -105,9 +117,9 @@
 
 ### composite action（`action.yml`）
 
-- 入力は `base`、`head`（必須）と `version`、`allow-status`（既定は `false`）、`allow-links`（既定は `false`）、`links`（既定は `true`）、`check-status`（既定は `true`）（任意）。
+- 入力は `base`、`head`（必須）と `version`、`allow-status`（既定は `false`）、`allow-links`（既定は `false`）、`links`（既定は `true`）、`check-status`（既定は `true`）、`check-numbers`（既定は `true`）、`allow-renumber`（既定は `false`）（任意）。
 - `version` を省略すると、action自身の `Cargo.toml` のバージョン（`v<version>`）を使う。
-- リリースから `x86_64-unknown-linux-gnu` のアーカイブと `SHA256SUMS` をダウンロードし、チェックサムを検証してから、ワークスペースで `adr-guard check-range <base> <head>` を実行する。`allow-status`、`allow-links` が `true` なら、それぞれ `--allow-status`、`--allow-links` を付ける。`links` が `true` なら、続けて `adr-guard links` を実行する（[ADR 0009](adr/0009-require-links-for-adr-references.md)）。`check-status` が `true` なら、続けて `adr-guard check-status` を実行する（[ADR 0012](adr/0012-status-line-and-status-adt.md)）。
+- リリースから `x86_64-unknown-linux-gnu` のアーカイブと `SHA256SUMS` をダウンロードし、チェックサムを検証してから、ワークスペースで `adr-guard check-range <base> <head>` を実行する。`allow-status`、`allow-links` が `true` なら、それぞれ `--allow-status`、`--allow-links` を付ける。`links` が `true` なら、続けて `adr-guard links` を実行する（[ADR 0009](adr/0009-require-links-for-adr-references.md)）。`check-status` が `true` なら、続けて `adr-guard check-status` を実行する（[ADR 0012](adr/0012-status-line-and-status-adt.md)）。`check-numbers` が `true` なら、続けて `adr-guard check-numbers` を実行する。`allow-renumber` が `true` なら、`check-range` に `--allow-renumber` を付ける（[ADR 0018](adr/0018-repair-duplicate-adr-numbers.md)）。
 - Linux（x86_64）以外のランナーではエラーにする。
 
 ## 開発プロセス

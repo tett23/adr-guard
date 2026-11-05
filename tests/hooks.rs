@@ -1950,3 +1950,222 @@ mod unimplemented {
         assert_eq!(run(p, &["pre-commit", "--allow-status"]).0, 0);
     }
 }
+
+mod renumber {
+    use super::*;
+
+    const A: &str = "# ADR 0017: a\n\nステータス: 採択\n\nA の本文\n";
+    const B: &str = "# ADR 0017: b\n\nステータス: 採択\n\nB の本文\n";
+
+    fn run(dir: &Path, args: &[&str]) -> (i32, String) {
+        let output = Command::new(BIN)
+            .args(args)
+            .current_dir(dir)
+            .env_remove("ADR_GUARD_ALLOW")
+            .output()
+            .unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    }
+
+    fn head(dir: &Path) -> String {
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn read(dir: &Path, path: &str) -> String {
+        std::fs::read_to_string(dir.join(path)).unwrap()
+    }
+
+    /// ADR 0018 の結合テストの一時リポジトリ。`0017-a.md` と `0017-b.md` を別々のコミットで追加する。
+    fn duplicate_repo() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]);
+        git(p, &["config", "user.name", "test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+        write(
+            p,
+            "docs/adr/0016-x.md",
+            "# ADR 0016: x\n\nステータス: 採択\n\n[ADR 0017](0017-b.md) を参照\n",
+        );
+        write(p, "docs/adr/0017-a.md", A);
+        git(p, &["add", "."]);
+        commit_at(p, "a", "2026-01-01T00:00:00");
+        write(p, "docs/adr/0017-b.md", B);
+        write(
+            p,
+            "README.md",
+            "[ADR 0017](docs/adr/0017-b.md) と [A](docs/adr/0017-a.md)\n",
+        );
+        git(p, &["add", "."]);
+        commit_at(p, "b", "2026-01-02T00:00:00");
+        dir
+    }
+
+    /// 作者とコミットの日付を `date` にしてコミットする（追加された順を決めるため）。
+    fn commit_at(dir: &Path, message: &str, date: &str) {
+        let status = Command::new("git")
+            .args(["commit", "-q", "--no-verify", "-m", message])
+            .env("GIT_AUTHOR_DATE", date)
+            .env("GIT_COMMITTER_DATE", date)
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn check_numbers_reports_duplicates() {
+        let dir = duplicate_repo();
+        let (code, stderr) = run(dir.path(), &["check-numbers"]);
+        assert_eq!(code, 1);
+        assert!(
+            stderr.contains(
+                "check-numbers: docs/adr: ADR 0017 が重複しています: 0017-a.md, 0017-b.md"
+            ),
+            "{stderr}"
+        );
+        assert!(stderr.contains("adr-guard renumber"), "{stderr}");
+        assert_eq!(run(repo().path(), &["check-numbers"]).0, 0);
+    }
+
+    #[test]
+    fn check_numbers_ignores_other_directories() {
+        let dir = repo();
+        let p = dir.path();
+        write(
+            p,
+            "docs/server/adr/0001-x.md",
+            "# ADR 0001: x\n\nステータス: 採択\n",
+        );
+        assert_eq!(run(p, &["check-numbers"]).0, 0);
+    }
+
+    #[test]
+    fn dry_run_shows_the_plan_without_changing_files() {
+        let dir = duplicate_repo();
+        let p = dir.path();
+        let (code, stderr) = run(p, &["renumber", "--dry-run"]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            stderr.contains("docs/adr: 0017-b.md -> 0018-b.md"),
+            "{stderr}"
+        );
+        assert!(p.join("docs/adr/0017-b.md").exists());
+        assert!(!p.join("docs/adr/0018-b.md").exists());
+    }
+
+    #[test]
+    fn renumber_renames_and_fixes_links() {
+        let dir = duplicate_repo();
+        let p = dir.path();
+        let (code, stderr) = run(p, &["renumber"]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(!p.join("docs/adr/0017-b.md").exists());
+        assert_eq!(
+            read(p, "docs/adr/0018-b.md"),
+            B.replace("# ADR 0017:", "# ADR 0018:")
+        );
+        assert_eq!(read(p, "docs/adr/0017-a.md"), A);
+        assert_eq!(
+            read(p, "README.md"),
+            "[ADR 0018](docs/adr/0018-b.md) と [A](docs/adr/0017-a.md)\n"
+        );
+        assert!(read(p, "docs/adr/0016-x.md").contains("[ADR 0018](0018-b.md) を参照"));
+        assert_eq!(run(p, &["check-numbers"]).0, 0);
+        assert_eq!(run(p, &["links"]).0, 0);
+    }
+
+    #[test]
+    fn allow_renumber_permits_the_renumbering_commit() {
+        let dir = duplicate_repo();
+        let p = dir.path();
+        let base = head(p);
+        run(p, &["renumber"]);
+        git(p, &["add", "-A"]);
+        let checks = ["pre-commit", "--allow-status", "--allow-links"];
+        assert_eq!(run(p, &checks).0, 1);
+        let (code, stderr) = run(
+            p,
+            &[
+                "pre-commit",
+                "--allow-status",
+                "--allow-links",
+                "--allow-renumber",
+            ],
+        );
+        assert_eq!(code, 0, "{stderr}");
+        git(p, &["commit", "-q", "--no-verify", "-m", "renumber"]);
+        let head = head(p);
+        let args = [
+            "check-range",
+            "--allow-status",
+            "--allow-links",
+            "--allow-renumber",
+            &base,
+            &head,
+        ];
+        assert_eq!(run(p, &args).0, 0);
+        let args = [
+            "check-range",
+            "--allow-status",
+            "--allow-links",
+            &base,
+            &head,
+        ];
+        assert_eq!(run(p, &args).0, 1);
+    }
+
+    #[test]
+    fn allow_renumber_rejects_other_renames() {
+        // 重複していないADRのファイル名を変える
+        let dir = repo();
+        let p = dir.path();
+        git(p, &["mv", ADR, "docs/adr/0002-x.md"]);
+        let args = [
+            "pre-commit",
+            "--allow-status",
+            "--allow-links",
+            "--allow-renumber",
+        ];
+        assert_eq!(run(p, &args).0, 1);
+
+        // 振りなおしたADRの本文も変える
+        let dir = duplicate_repo();
+        let p = dir.path();
+        run(p, &["renumber"]);
+        let changed = read(p, "docs/adr/0018-b.md").replace("B の本文", "改変");
+        write(p, "docs/adr/0018-b.md", &changed);
+        git(p, &["add", "-A"]);
+        assert_eq!(run(p, &args).0, 1);
+    }
+
+    #[test]
+    fn rejects_wrong_arguments() {
+        let dir = repo();
+        for args in [
+            &["check-numbers", "x"][..],
+            &["renumber", "x"],
+            &["renumber", "--fix"],
+        ] {
+            assert_eq!(run(dir.path(), args).0, 64, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn help_mentions_renumbering() {
+        let output = Command::new(BIN).arg("--help").output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        for word in ["check-numbers", "renumber", "--allow-renumber"] {
+            assert!(stdout.contains(word), "{word}: {stdout}");
+        }
+    }
+}

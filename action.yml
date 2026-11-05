@@ -28,6 +28,14 @@ inputs:
     description: true なら、adr-guard check-status でADRのステータスの行がちょうど1つあるかを検査する。既存のADRの移行が済むまで false にできる
     required: false
     default: "true"
+  check-numbers:
+    description: true なら、adr-guard check-numbers でADRの番号の重複を検査する
+    required: false
+    default: "true"
+  allow-renumber:
+    description: true なら、adr-guard renumber による重複した番号の振りなおしを許可する（check-range --allow-renumber）
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
@@ -41,6 +49,8 @@ runs:
         ALLOW_LINKS: ${{ inputs.allow-links }}
         LINKS: ${{ inputs.links }}
         CHECK_STATUS: ${{ inputs.check-status }}
+        CHECK_NUMBERS: ${{ inputs.check-numbers }}
+        ALLOW_RENUMBER: ${{ inputs.allow-renumber }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
@@ -70,6 +80,9 @@ runs:
         if [ "$ALLOW_LINKS" = "true" ]; then
           options+=(--allow-links)
         fi
+        if [ "$ALLOW_RENUMBER" = "true" ]; then
+          options+=(--allow-renumber)
+        fi
         "$bin" check-range "${options[@]}" "$BASE_SHA" "$HEAD_SHA"
         if [ "$LINKS" = "true" ]; then
           "$bin" links
@@ -77,4 +90,8 @@ runs:
         # docs/adr/0012
         if [ "$CHECK_STATUS" = "true" ]; then
           "$bin" check-status
+        fi
+        # docs/adr/0018
+        if [ "$CHECK_NUMBERS" = "true" ]; then
+          "$bin" check-numbers
         fi

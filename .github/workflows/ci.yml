@@ -63,3 +63,6 @@ jobs:
       # docs/adr/0012
       - name: Check status lines of ADRs
         run: cargo run --quiet -- check-status
+      # docs/adr/0018
+      - name: Check duplicate ADR numbers
+        run: cargo run --quiet -- check-numbers
