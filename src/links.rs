@@ -272,6 +272,67 @@ fn is_definition(line: &str) -> bool {
             .is_some_and(|close| close > 1 && rest.as_bytes().get(close + 1) == Some(&b':'))
 }
 
+/// インラインのリンク（画像を除く）を、`f(テキスト, リンク先)` が返す新しいテキストとリンク先に置きかえる。
+/// `f` が None を返すリンクと、フェンスの中やインラインのコードの中は変えない。置きかえた数も返す（ADR 0018）。
+pub fn map_inline_links(
+    content: &str,
+    f: impl Fn(&str, &str) -> Option<(String, String)>,
+) -> (String, usize) {
+    let mut count = 0;
+    let mapped = lines_with_fences(content)
+        .into_iter()
+        .map(|(line, verbatim)| {
+            if verbatim {
+                return line.to_owned();
+            }
+            segments(line)
+                .into_iter()
+                .map(|segment| match segment {
+                    Segment::InlineLink {
+                        raw,
+                        text,
+                        image: false,
+                    } => {
+                        let dest = &raw[text.len() + 3..raw.len() - 1];
+                        match f(text, dest) {
+                            Some((text, dest)) => {
+                                count += 1;
+                                format!("[{text}]({dest})")
+                            }
+                            None => raw.to_owned(),
+                        }
+                    }
+                    Segment::Text(raw)
+                    | Segment::Opaque(raw)
+                    | Segment::InlineLink { raw, .. }
+                    | Segment::RefLink { raw, .. } => raw.to_owned(),
+                })
+                .collect::<String>()
+        })
+        .collect();
+    (mapped, count)
+}
+
+/// リンクの無いADRの参照の、行番号と番号（参照先を解決しない。ADR 0018）。
+pub fn unlinked_numbers(content: &str) -> Vec<(usize, String)> {
+    lines_with_fences(content)
+        .into_iter()
+        .enumerate()
+        .filter(|(_, (_, verbatim))| !verbatim)
+        .flat_map(|(index, (line, _))| {
+            segments(line)
+                .into_iter()
+                .filter_map(|segment| match segment {
+                    Segment::Text(text) => Some(text),
+                    _ => None,
+                })
+                .flat_map(references)
+                .map(|reference| (index + 1, reference.number.to_owned()))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 /// `--allow-links` の比較のために、リンクに関する違いを取り除く（ADR 0009、0015）。
 ///
 /// リンク（インラインと参照形式）はテキストだけにし、画像はリンク先だけを取り除き、
