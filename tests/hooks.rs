@@ -2085,6 +2085,27 @@ mod renumber {
     }
 
     #[test]
+    fn renumber_does_not_warn_about_titles_of_adrs() {
+        // ADR自身のタイトルの行（# ADR 0017: a）は参照ではない
+        let dir = duplicate_repo();
+        let p = dir.path();
+        write(
+            p,
+            "docs/adr/0016-x.md",
+            "# ADR 0016: x\n\nステータス: 採択\n\nADR 0017 を参照\n",
+        );
+        let (code, stderr) = run(p, &["renumber"]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(!stderr.contains("0017-a.md:1:"), "{stderr}");
+        assert!(
+            stderr.contains(
+                "docs/adr/0016-x.md:5: ADR 0017 はどちらのADRを指すか分からないため、直していません"
+            ),
+            "{stderr}"
+        );
+    }
+
+    #[test]
     fn allow_renumber_permits_the_renumbering_commit() {
         let dir = duplicate_repo();
         let p = dir.path();
