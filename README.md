@@ -64,7 +64,7 @@ adr-guard proposed | xargs "$EDITOR"
 | Linux（x86_64） | `x86_64-unknown-linux-gnu` |
 
 ```sh
-tag=v0.9.1
+tag=v0.10.0
 target=aarch64-apple-darwin
 archive="adr-guard-$tag-$target.tar.gz"
 curl -fsSLO "https://github.com/tett23/adr-guard/releases/download/$tag/$archive"
@@ -72,7 +72,7 @@ curl -fsSLO "https://github.com/tett23/adr-guard/releases/download/$tag/SHA256SU
 grep "$archive" SHA256SUMS | shasum -a 256 -c   # Linuxでは sha256sum -c
 tar -xzf "$archive"
 mv "${archive%.tar.gz}/adr-guard" ~/.local/bin/
-adr-guard --version   # adr-guard 0.9.1
+adr-guard --version   # adr-guard 0.10.0
 ```
 
 macOS向けのバイナリは、Apple Developer IDによる署名と公証をしていない。
@@ -82,7 +82,7 @@ macOS向けのバイナリは、Apple Developer IDによる署名と公証をし
 ### ソースから
 
 ```sh
-cargo install --git https://github.com/tett23/adr-guard --tag v0.9.1
+cargo install --git https://github.com/tett23/adr-guard --tag v0.10.0
 ```
 
 手元の adr-guard のバージョンは `adr-guard --version` で確かめる。
@@ -136,7 +136,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: tett23/adr-guard@v0.9.1
+      - uses: tett23/adr-guard@v0.10.0
         with:
           base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           head: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
@@ -147,7 +147,7 @@ jobs:
 - 範囲内の全コミットを読むため、`fetch-depth: 0` でチェックアウトする。
 - `check-range` の後に、チェックアウトした作業ツリーで `adr-guard links` を実行する。入力 `links: false` で止められる。
 - 入力 `allow-status: true`、`allow-links: true` で、`check-range` に `--allow-status`、`--allow-links` を付ける。どちらも既定は `false`。
-- actionはタグかコミットのSHAで指定する。使う adr-guard のバージョンは、actionの `Cargo.toml` のバージョンになる。`version` 入力（例：`v0.9.1`）で変えられる。
+- actionはタグかコミットのSHAで指定する。使う adr-guard のバージョンは、actionの `Cargo.toml` のバージョンになる。`version` 入力（例：`v0.10.0`）で変えられる。
 
 ### v0.8.1 に上げる場合
 
