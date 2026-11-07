@@ -21,6 +21,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 - 新しいADRの追加と、未コミットのADRの編集は自由にできる。
 - `docs/adr/` から `docs/<モジュール>/adr/` への移動も、コミット済みのADRの移動として拒否する。移す場合は、新しい場所に新しいADRを作成する。
 - 文書（`.md`）の中のADRの参照（`ADR 0001` の形）には、ADRのファイルへのリンクを付ける（例：`[ADR 0001](docs/adr/0001-xxx.md)`、続く番号は `[ADR 0005](...)、[0006](...)`）。インラインのコード、コードブロック、リンクのテキストの中と、ADR自身の番号は対象外。参照先のADRが見つからない番号は検査しない。
+- ほかのモジュールやディレクトリのADRは、`golem-driver ADR 0015`、`docs/adr ADR 0187` のように前に修飾子を付けて書く。修飾子のディレクトリ（`docs/golem-driver/adr/`、`docs/adr/`）のADRへ `[golem-driver ADR 0015](...)` の形でつなぐ（[ADR 0019](docs/adr/0019-module-qualified-adr-references.md)）。`-` か `/` を含む修飾子の参照先が無ければ誤りとし、すでにあるリンクのリンク先が修飾子と食い違うものや、修飾子がリンクの外にあるもの（`golem-driver [ADR 0015](...)`）も誤りとする。
 
 ## サブコマンド
 
@@ -32,7 +33,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 | `adr-guard list [--status]` | 作業ツリーにあるADR（未コミットのものも含む）のパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する（ステータスの行が無ければステータスは空） |
 | `adr-guard proposed [--status]` | ステータスが提案（`提案…` か `Proposed`）のADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
 | `adr-guard unimplemented [--status]` | ステータスが `採択（未実装）`（か `Accepted (not implemented)`）の、採択されたがまだ実装されていないADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
-| `adr-guard links [--fix [--include-committed]]` | 作業ツリーの `.md` にある、リンクの無いADRの参照を報告する。`--fix` でリンクに置きかえる（コミット済みのADRは `--include-committed` を付けたときだけ） |
+| `adr-guard links [--fix [--include-committed]]` | 作業ツリーの `.md` にある、リンクの無いADRの参照と、修飾子の付いた参照の誤りを報告する。`--fix` でリンクに置きかえ、修飾子の付いたリンクを直す（コミット済みのADRは `--include-committed` を付けたときだけ） |
 | `adr-guard check-status` | 作業ツリーのすべてのADRについて、ステータスの行がちょうど1つあるかを検査する |
 | `adr-guard check-numbers` | 各ADRのディレクトリの直下で、同じ番号のADRが2つ以上ないかを検査する |
 | `adr-guard renumber [--dry-run]` | 重複したADRの番号を振りなおし、ファイル名・タイトルの行・リンクを直す。`--dry-run` では一覧だけを表示する |

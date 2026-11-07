@@ -122,7 +122,12 @@ ADRとステータス:
 
   adr-guard links [--fix [--include-committed]]
     作業ツリーの .md のファイルにある、リンクの無いADRの参照を「<パス>:<行>: ...」の形で標準エラーに表示する。
-    --fix                リンクの無い参照をリンクに置きかえてファイルを書きかえる。コミット済みのADRは書きかえない。
+    ほかのモジュールやディレクトリのADRは「golem-driver ADR 0015」「docs/adr ADR 0187」のように修飾子を前に付けて書く。
+    修飾子が名前なら docs/<名前>/adr など、パスならそのディレクトリのADRへ「[golem-driver ADR 0015](...)」の形でつなぐ。
+    - か / を含む修飾子の参照先が無いもの、既存のリンクのリンク先が修飾子と食い違うもの、
+    修飾子がリンクの外にあるもの（golem-driver [ADR 0015](...)）も報告する。
+    --fix                リンクの無い参照をリンクに置きかえ、修飾子の付いたリンクを直してファイルを書きかえる。
+                         コミット済みのADRは書きかえない。修飾子の参照先が無いものは直せない。
     --include-committed  --fix と一緒に使う。コミット済みのADRも書きかえる。
                          書きかえたADRのコミットには、検査の --allow-links が必要。
     終了コード: 0 リンクの無い参照なし（--fix では、修正後に残っていない）、1 残っている
@@ -671,7 +676,7 @@ fn unlinked_in_index() -> Option<Vec<String>> {
             let (_, findings) = scan_document(&path, &content, &adrs);
             findings
                 .into_iter()
-                .map(move |f| format!("{path}:{}: ADR {} にリンクがありません", f.line, f.number))
+                .map(move |f| format!("{path}:{}: {}", f.line, f.message()))
                 .collect::<Vec<_>>()
         })
         .collect();
@@ -801,25 +806,9 @@ fn adr_number(path: &str) -> Option<&str> {
         .then_some(number)
 }
 
-/// 文書のリンクの無い参照を調べる。`adrs` は参照先を探すADRのパスの一覧（ADR 0009）。
+/// 文書のADRの参照を調べる。`adrs` は参照先を探すADRのパスの一覧（ADR 0009、0019）。
 fn scan_document(path: &str, content: &str, adrs: &[String]) -> (String, Vec<links::Finding>) {
-    let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir);
-    let target = |number: &str| {
-        links::candidate_dirs(path)
-            .into_iter()
-            .find_map(|candidate| {
-                let prefix = format!("{candidate}/{number}-");
-                let matches: Vec<&String> = adrs
-                    .iter()
-                    .filter(|adr| adr.starts_with(&prefix) && !adr[prefix.len()..].contains('/'))
-                    .collect();
-                match matches.as_slice() {
-                    [only] => Some(links::relative(dir, only)),
-                    _ => None,
-                }
-            })
-    };
-    links::scan(content, adr_number(path), target)
+    links::check(path, content, adrs, adr_number(path))
 }
 
 /// `adr-guard links [--fix [--include-committed]]`（ADR 0009）。
@@ -848,12 +837,22 @@ fn links(fix: bool, include_committed: bool) -> ExitCode {
         }
         let record = is_record_path(path);
         let protected = (is_adr_path(path) || record) && committed.contains(path);
+        let (fixable, unfixable): (Vec<_>, Vec<_>) =
+            findings.iter().partition(|finding| finding.fixable());
+        // 直せない誤り（ADR 0019）は、--fix でも報告する
+        for finding in &unfixable {
+            eprintln!("{path}:{}: {}", finding.line, finding.message());
+        }
+        remaining += unfixable.len();
+        if fixable.is_empty() {
+            continue;
+        }
         if fix && (!protected || include_committed) {
             if std::fs::write(root.join(path), fixed).is_err() {
                 eprintln!("links: 書きかえられませんでした: {path}");
                 return ExitCode::FAILURE;
             }
-            eprintln!("{path}: {}件の参照をリンクにしました", findings.len());
+            eprintln!("{path}: {}件の参照をリンクにしました", fixable.len());
             if protected && record {
                 eprintln!(
                     "{path}: コミット済みの記録です。コミットには {ALLOW_TRAILER} のトレーラーが要ります"
@@ -866,13 +865,10 @@ fn links(fix: bool, include_committed: bool) -> ExitCode {
             (true, false) => "（コミット済みのADR。--include-committed で修正できます）",
             (true, true) => "（コミット済みの記録。--include-committed で修正できます）",
         };
-        for finding in &findings {
-            eprintln!(
-                "{path}:{}: ADR {} にリンクがありません{note}",
-                finding.line, finding.number
-            );
+        for finding in &fixable {
+            eprintln!("{path}:{}: {}{note}", finding.line, finding.message());
         }
-        remaining += findings.len();
+        remaining += fixable.len();
     }
     if remaining > 0 {
         eprintln!("{LINKS_ADVICE}");
