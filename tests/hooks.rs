@@ -2190,3 +2190,161 @@ mod renumber {
         }
     }
 }
+
+/// ADR 0019: 修飾子の付いたADRの参照。
+mod qualified_links {
+    use super::*;
+
+    fn adr(number: &str, body: &str) -> String {
+        format!("# ADR {number}: x\n\nステータス: 採択\n\n{body}\n")
+    }
+
+    fn run(dir: &Path, args: &[&str]) -> (i32, String) {
+        let output = Command::new(BIN)
+            .args(args)
+            .current_dir(dir)
+            .env_remove("ADR_GUARD_ALLOW")
+            .output()
+            .unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    }
+
+    fn read(dir: &Path, path: &str) -> String {
+        std::fs::read_to_string(dir.join(path)).unwrap()
+    }
+
+    const WRONG_0172: &str = "（golem-driver [ADR 0015](0015-regex-styles.md)）";
+    const WRONG_0003: &str =
+        "golem-doc [ADR 0008](../../adr/0008-first-release-verification.md) が";
+
+    /// tett23/golem と同じ配置のADRと、誤ったリンクをコミットした一時リポジトリ。
+    fn golem_repo() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]);
+        git(p, &["config", "user.name", "test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+        for (path, number, body) in [
+            (
+                "docs/adr/0008-first-release-verification.md",
+                "0008",
+                "本文",
+            ),
+            ("docs/adr/0015-regex-styles.md", "0015", "本文"),
+            ("docs/adr/0187-x.md", "0187", "本文"),
+            (
+                "docs/golem-driver/adr/0015-vertical-dashes.md",
+                "0015",
+                "本文",
+            ),
+            (
+                "docs/golem-doc/adr/0008-multiple-index-and-bibliography.md",
+                "0008",
+                "本文",
+            ),
+            (
+                "docs/adr/0172-continuous-double-dashes.md",
+                "0172",
+                WRONG_0172,
+            ),
+            (
+                "docs/golem-html/adr/0003-cite-links-across-files.md",
+                "0003",
+                WRONG_0003,
+            ),
+        ] {
+            write(p, path, &adr(number, body));
+        }
+        write(
+            p,
+            "docs/specifications.md",
+            "docs/adr ADR 0187\n\ngolem-driver ADR 0015\n\ngolem-nope ADR 0001\n",
+        );
+        git(p, &["add", "."]);
+        git(p, &["commit", "-qm", "init"]);
+        dir
+    }
+
+    #[test]
+    fn links_reports_qualified_references() {
+        let dir = golem_repo();
+        let (code, stderr) = run(dir.path(), &["links"]);
+        assert_eq!(code, 1, "{stderr}");
+        for expected in [
+            "docs/adr/0172-continuous-double-dashes.md:5: golem-driver ADR 0015 のリンク先 0015-regex-styles.md は、docs/golem-driver/adr/0015-vertical-dashes.md ではありません",
+            "docs/golem-html/adr/0003-cite-links-across-files.md:5: golem-doc ADR 0008 のリンク先 ../../adr/0008-first-release-verification.md は、docs/golem-doc/adr/0008-multiple-index-and-bibliography.md ではありません",
+            "docs/specifications.md:1: docs/adr ADR 0187 にリンクがありません",
+            "docs/specifications.md:3: golem-driver ADR 0015 にリンクがありません",
+            "docs/specifications.md:5: golem-nope ADR 0001: golem-nope のADRのディレクトリがありません",
+        ] {
+            assert!(stderr.contains(expected), "{expected}: {stderr}");
+        }
+    }
+
+    #[test]
+    fn links_fix_rewrites_qualified_references() {
+        let dir = golem_repo();
+        let p = dir.path();
+        let (code, stderr) = run(p, &["links", "--fix", "--include-committed"]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(
+            stderr.contains("docs/specifications.md:5: golem-nope ADR 0001: golem-nope のADRのディレクトリがありません"),
+            "{stderr}"
+        );
+        assert_eq!(
+            read(p, "docs/adr/0172-continuous-double-dashes.md"),
+            adr(
+                "0172",
+                "（[golem-driver ADR 0015](../golem-driver/adr/0015-vertical-dashes.md)）"
+            )
+        );
+        assert_eq!(
+            read(p, "docs/golem-html/adr/0003-cite-links-across-files.md"),
+            adr(
+                "0003",
+                "[golem-doc ADR 0008](../../golem-doc/adr/0008-multiple-index-and-bibliography.md) が"
+            )
+        );
+        assert_eq!(
+            read(p, "docs/specifications.md"),
+            "[docs/adr ADR 0187](adr/0187-x.md)\n\n[golem-driver ADR 0015](golem-driver/adr/0015-vertical-dashes.md)\n\ngolem-nope ADR 0001\n"
+        );
+
+        // 直したコミット済みのADRは --allow-links で許可される
+        git(p, &["add", "docs/adr", "docs/golem-html"]);
+        let (code, stderr) = run(p, &["pre-commit", "--allow-links"]);
+        assert_eq!(code, 0, "{stderr}");
+        let (code, _) = run(p, &["pre-commit"]);
+        assert_eq!(code, 1);
+
+        write(
+            p,
+            "docs/specifications.md",
+            &read(p, "docs/specifications.md").replace("golem-nope ADR 0001\n", ""),
+        );
+        let (code, stderr) = run(p, &["links"]);
+        assert_eq!((code, stderr.as_str()), (0, ""));
+    }
+
+    #[test]
+    fn pre_commit_rejects_wrong_qualified_links() {
+        let dir = golem_repo();
+        let p = dir.path();
+        write(
+            p,
+            "notes.md",
+            "golem-driver [ADR 0015](docs/adr/0015-regex-styles.md)\n",
+        );
+        git(p, &["add", "notes.md"]);
+        let (code, stderr) = run(p, &["pre-commit", "--allow-links"]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(
+            stderr.contains("notes.md:1: golem-driver ADR 0015 のリンク先 docs/adr/0015-regex-styles.md は、docs/golem-driver/adr/0015-vertical-dashes.md ではありません"),
+            "{stderr}"
+        );
+    }
+}
