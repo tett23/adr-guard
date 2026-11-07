@@ -126,6 +126,7 @@ ADRとステータス:
     修飾子が名前なら docs/<名前>/adr など、パスならそのディレクトリのADRへ「[golem-driver ADR 0015](...)」の形でつなぐ。
     - か / を含む修飾子の参照先が無いもの、既存のリンクのリンク先が修飾子と食い違うもの、
     修飾子がリンクの外にあるもの（golem-driver [ADR 0015](...)）も報告する。
+    シンボリックリンクの .md は検査も書きかえもしない（実体のファイルを実体のパスで検査する）。
     --fix                リンクの無い参照をリンクに置きかえ、修飾子の付いたリンクを直してファイルを書きかえる。
                          コミット済みのADRは書きかえない。修飾子の参照先が無いものは直せない。
     --include-committed  --fix と一緒に使う。コミット済みのADRも書きかえる。
@@ -666,12 +667,37 @@ fn status_violations_in_index(cwd: &Path) -> Option<Vec<String>> {
     )
 }
 
-/// ステージされた追加・変更の .md のファイルの、インデックスの内容にあるリンクの無い参照（ADR 0009）。
+/// インデックスでシンボリックリンク（モード 120000）のパス（ADR 0020）。
+fn symlinks_in_index(root: &Path) -> Option<HashSet<String>> {
+    let entries = git(&["ls-files", "--stage", "-z"], root)?;
+    Some(
+        entries
+            .split(|&b| b == 0)
+            .map(|entry| String::from_utf8_lossy(entry).into_owned())
+            .filter_map(|entry| {
+                let (meta, path) = entry.split_once('\t')?;
+                meta.starts_with("120000 ").then(|| path.to_owned())
+            })
+            .collect(),
+    )
+}
+
+/// 作業ツリーでパスそのものがシンボリックリンクか（ADR 0020）。
+fn is_symlink(root: &Path, path: &str) -> bool {
+    root.join(path)
+        .symlink_metadata()
+        .is_ok_and(|meta| meta.file_type().is_symlink())
+}
+
+/// ステージされた追加・変更の .md のファイル（シンボリックリンクを除く）の、
+/// インデックスの内容にあるADRの参照の誤り（ADR 0009、0019、0020）。
 fn unlinked_in_index() -> Option<Vec<String>> {
     let (root, files) = work_tree_files()?;
     let adrs = adr_paths(&files);
+    let symlinks = symlinks_in_index(&root)?;
     let findings = staged_documents(&root)?
         .into_iter()
+        .filter(|(path, _)| !symlinks.contains(path))
         .flat_map(|(path, content)| {
             let (_, findings) = scan_document(&path, &content, &adrs);
             findings
@@ -827,7 +853,11 @@ fn links(fix: bool, include_committed: bool) -> ExitCode {
         .unwrap_or_default();
 
     let mut remaining = 0;
-    for path in files.iter().filter(|path| path.ends_with(".md")) {
+    // シンボリックリンクは実体のパスで検査する（ADR 0020）
+    for path in files
+        .iter()
+        .filter(|path| path.ends_with(".md") && !is_symlink(&root, path))
+    {
         let Ok(content) = std::fs::read_to_string(root.join(path)) else {
             continue;
         };
@@ -1001,9 +1031,10 @@ fn renumber(dry_run: bool) -> ExitCode {
         }
     }
 
+    // シンボリックリンクは書きかえない（ADR 0020）
     let docs = files
         .iter()
-        .filter(|path| path.ends_with(".md") && !is_record_path(path));
+        .filter(|path| path.ends_with(".md") && !is_record_path(path) && !is_symlink(&root, path));
     let mut fixed = 0;
     for path in docs {
         let path = renames

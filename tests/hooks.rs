@@ -2348,3 +2348,149 @@ mod qualified_links {
         );
     }
 }
+
+/// ADR 0020: シンボリックリンクの文書。
+#[cfg(unix)]
+mod symlinked_documents {
+    use super::*;
+
+    const DIAGNOSTICS: &str = "[golem-cli ADR 0005](golem-cli/adr/0005-x.md) を参照\n";
+
+    fn run(dir: &Path, args: &[&str]) -> (i32, String) {
+        let output = Command::new(BIN)
+            .args(args)
+            .current_dir(dir)
+            .env_remove("ADR_GUARD_ALLOW")
+            .output()
+            .unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    }
+
+    fn read(dir: &Path, path: &str) -> String {
+        std::fs::read_to_string(dir.join(path)).unwrap()
+    }
+
+    fn symlink(dir: &Path, target: &str, path: &str) {
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(target, path).unwrap();
+    }
+
+    fn commit_at(dir: &Path, message: &str, date: &str) {
+        let status = Command::new("git")
+            .args(["commit", "-qm", message])
+            .env("GIT_AUTHOR_DATE", date)
+            .env("GIT_COMMITTER_DATE", date)
+            .current_dir(dir)
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    /// `docs/diagnostics.md` と、それへのシンボリックリンク `modules/m/diagnostics.md` をコミットした一時リポジトリ。
+    fn symlink_repo() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]);
+        git(p, &["config", "user.name", "test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+        write(
+            p,
+            "docs/golem-cli/adr/0005-x.md",
+            "# ADR 0005: x\n\nステータス: 採択\n\n本文\n",
+        );
+        write(p, "docs/diagnostics.md", DIAGNOSTICS);
+        symlink(p, "../../docs/diagnostics.md", "modules/m/diagnostics.md");
+        git(p, &["add", "."]);
+        commit_at(p, "init", "2026-01-02T00:00:00");
+        dir
+    }
+
+    #[test]
+    fn links_skips_symlinks() {
+        let dir = symlink_repo();
+        assert_eq!(run(dir.path(), &["links"]), (0, String::new()));
+    }
+
+    #[test]
+    fn links_fix_writes_only_the_real_file() {
+        let dir = symlink_repo();
+        let p = dir.path();
+        write(
+            p,
+            "docs/diagnostics.md",
+            &format!("{DIAGNOSTICS}golem-cli ADR 0005\n"),
+        );
+        let (code, stderr) = run(p, &["links"]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(
+            stderr.contains("docs/diagnostics.md:2: golem-cli ADR 0005 にリンクがありません"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("modules/m"), "{stderr}");
+
+        let (code, stderr) = run(p, &["links", "--fix"]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(!stderr.contains("modules/m"), "{stderr}");
+        assert_eq!(
+            read(p, "docs/diagnostics.md"),
+            format!("{DIAGNOSTICS}[golem-cli ADR 0005](golem-cli/adr/0005-x.md)\n")
+        );
+        assert_eq!(run(p, &["links"]), (0, String::new()));
+    }
+
+    #[test]
+    fn pre_commit_skips_staged_symlinks() {
+        let dir = symlink_repo();
+        let p = dir.path();
+        // インデックスのシンボリックリンクの内容はリンク先のパス。参照に見える文字列でも検査しない
+        symlink(p, "golem-cli ADR 0005", "modules/n/diagnostics.md");
+        git(p, &["add", "modules/n/diagnostics.md"]);
+        let (code, stderr) = run(p, &["pre-commit", "--allow-status", "--allow-links"]);
+        assert_eq!(code, 0, "{stderr}");
+    }
+
+    #[test]
+    fn renumber_skips_symlinks() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]);
+        git(p, &["config", "user.name", "test"]);
+        git(p, &["config", "user.email", "test@example.com"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+        write(
+            p,
+            "docs/golem-cli/adr/0005-a.md",
+            "# ADR 0005: a\n\nステータス: 採択\n\n本文\n",
+        );
+        git(p, &["add", "."]);
+        commit_at(p, "a", "2026-01-01T00:00:00");
+        write(
+            p,
+            "docs/golem-cli/adr/0005-x.md",
+            "# ADR 0005: x\n\nステータス: 採択\n\n本文\n",
+        );
+        // 2行めのリンクは、シンボリックリンクの場所（docs/golem-cli）からだけ解決できる
+        write(
+            p,
+            "docs/diagnostics.md",
+            &format!("{DIAGNOSTICS}[b](adr/0005-x.md)\n"),
+        );
+        symlink(p, "../diagnostics.md", "docs/golem-cli/d.md");
+        git(p, &["add", "."]);
+        commit_at(p, "x", "2026-01-02T00:00:00");
+
+        let (code, stderr) = run(p, &["renumber"]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stderr.contains("1件の参照を直しました"), "{stderr}");
+        assert_eq!(
+            read(p, "docs/diagnostics.md"),
+            "[golem-cli ADR 0005](golem-cli/adr/0006-x.md) を参照\n[b](adr/0005-x.md)\n"
+        );
+    }
+}
