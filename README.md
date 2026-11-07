@@ -22,6 +22,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 - `docs/adr/` から `docs/<モジュール>/adr/` への移動も、コミット済みのADRの移動として拒否する。移す場合は、新しい場所に新しいADRを作成する。
 - 文書（`.md`）の中のADRの参照（`ADR 0001` の形）には、ADRのファイルへのリンクを付ける（例：`[ADR 0001](docs/adr/0001-xxx.md)`、続く番号は `[ADR 0005](...)、[0006](...)`）。インラインのコード、コードブロック、リンクのテキストの中と、ADR自身の番号は対象外。参照先のADRが見つからない番号は検査しない。
 - ほかのモジュールやディレクトリのADRは、`golem-driver ADR 0015`、`docs/adr ADR 0187` のように前に修飾子を付けて書く。修飾子のディレクトリ（`docs/golem-driver/adr/`、`docs/adr/`）のADRへ `[golem-driver ADR 0015](...)` の形でつなぐ（[ADR 0019](docs/adr/0019-module-qualified-adr-references.md)）。`-` か `/` を含む修飾子の参照先が無ければ誤りとし、すでにあるリンクのリンク先が修飾子と食い違うものや、修飾子がリンクの外にあるもの（`golem-driver [ADR 0015](...)`）も誤りとする。
+- シンボリックリンクの `.md` は、ADRの参照の検査（`links`、pre-commit hook）と書きかえ（`links --fix`、`renumber`）の対象にしない。実体のファイルを実体のパスで検査する（[ADR 0020](docs/adr/0020-skip-symlinked-documents.md)）。
 
 ## サブコマンド
 
