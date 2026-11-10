@@ -6,7 +6,7 @@
 
 ADRは決定の記録であり、あとから書きかえると経緯が失われる。
 仕様を変える場合は、元のADRを書きかえずに新しいADRを作成する。
-adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CIの三か所で強制する。
+adr-guard は、この規則をgitのpre-commit hook、Claude CodeとCodexのhook、CIで強制する。
 
 ## 規則
 
@@ -30,6 +30,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 |---|---|
 | `adr-guard pre-commit [--allow-status] [--allow-links]` | gitのpre-commit hookとして、ステージされた変更を検査する。ステージされた `.md` のリンクの無いADRの参照も拒否する |
 | `adr-guard claude-hook [--allow-status]` | Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditによるコミット済みADRの変更を拒否する |
+| `adr-guard codex-hook [--allow-status]` | CodexのPreToolUse hookとして、`apply_patch` のパッチ（シェルから当てるものも含む）によるコミット済みADRの変更・削除・移動を拒否する |
 | `adr-guard check-range <base> <head> [--allow-status] [--allow-links]` | `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。`<base>` が無いコミットならルートコミットから検査する |
 | `adr-guard list [--status]` | 作業ツリーにあるADR（未コミットのものも含む）のパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する（ステータスの行が無ければステータスは空） |
 | `adr-guard proposed [--status]` | ステータスが提案（`提案…` か `Proposed`）のADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
@@ -41,7 +42,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude Codeのhook、CI�
 | `adr-guard --version`、`-V` | バージョンを表示する |
 | `adr-guard --help`、`-h` | ヘルプを表示する。AIがヘルプだけで使い方を把握できるよう、規則、各サブコマンドの出力の形と終了コード、例まで載せている |
 
-- `--allow-status`：コミット済みのADRで、ステータスの行の変更を許可する（`pre-commit`、`claude-hook`、`check-range`）。値の変更、見出しの変更（`Status:` から `ステータス:` など）、ステータスの行が無かったADRへの1行の追加が許可される。付けないと、ステータスの行も変更できない。
+- `--allow-status`：コミット済みのADRで、ステータスの行の変更を許可する（`pre-commit`、`claude-hook`、`codex-hook`、`check-range`）。値の変更、見出しの変更（`Status:` から `ステータス:` など）、ステータスの行が無かったADRへの1行の追加が許可される。付けないと、ステータスの行も変更できない。
 - `--allow-links`：コミット済みのADRで、リンクだけが異なる変更を許可する（[ADR 0009](docs/adr/0009-require-links-for-adr-references.md)、[0015](docs/adr/0015-allow-link-changes.md)）。ADRの参照に限らず、リンク（インライン・参照形式）を付ける・外す・リンク先を変える変更と、画像のリンク先やリンクの参照定義の行（`[1]: URL`）の変更が通る。リンクのテキストの変更、画像の追加・削除、自動リンク（`<URL>`）と本文のURLの変更は通らない。
 - `--allow-renumber`：`adr-guard renumber` で行った、重複した番号の振りなおしを許可する（`pre-commit`、`check-range`。[ADR 0018](docs/adr/0018-repair-duplicate-adr-numbers.md)）。
 - オプションは、サブコマンドの後ろならどの位置に置いてもよい。
@@ -122,6 +123,27 @@ git config core.hooksPath .githooks
 }
 ```
 
+### Codexのhook
+
+リポジトリの `.codex/hooks.json`（すべてのリポジトリで使うなら `~/.codex/hooks.json`）に追加する。
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(apply_patch|Bash)$",
+        "hooks": [{ "type": "command", "command": "adr-guard codex-hook --allow-status" }]
+      }
+    ]
+  }
+}
+```
+
+Codexはファイルを `apply_patch` のパッチで編集する。`codex-hook` はパッチの消す行と足す行で判定するため、ステータスの行だけを変えるパッチは通し、本文に触れるパッチは中身が変わらなくても拒否する。シェルのコマンドの中のパッチを調べるため、`matcher` に `Bash` を含める。`sed -i` などパッチ以外のコマンドによる変更は検査しない。
+
+Codex（0.166.0で確認）は、新しく足した hook と、変えた hook を、利用者が信頼するまで動かさない。hook を足したら、Codex の対話の画面で `/hooks` を開き、この hook を信頼する。信頼していない hook は何も止めないため、パッチはそのまま当たる。
+
 ### CI（GitHub Actions）
 
 このリポジトリのcomposite actionを使う。リリースのバイナリをダウンロードし、`SHA256SUMS` で検証してから `check-range` を実行する。
@@ -183,7 +205,7 @@ actionは既定で `adr-guard check-numbers` を実行し、重複があればCI
 
 ### 注意
 
-- adr-guard が手元に無いと、pre-commit hookはコマンドが見つからずにコミットを拒否し、Claude Codeのhookは編集を止めない。どちらの場合もCIで検査される。
+- adr-guard が手元に無いと、pre-commit hookはコマンドが見つからずにコミットを拒否し、Claude CodeとCodexのhookは編集を止めない。どちらの場合もCIで検査される。
 - `git commit --no-verify` やGitHubのWeb UIでの編集はhookを通らない。CIで検査する。
 - CIでは、範囲内で一度でもADRを書きかえたコミットがあれば、後のコミットで戻していても失敗する。履歴を書きかえて（rebaseなどで）直す。
 
@@ -214,7 +236,7 @@ MSG
 ```
 
 許可はトレーラーを付けたコミットだけに及ぶ。理由は履歴に残るので、プルリクエストのレビューで確かめる。
-Claude Codeのhookには許可の手段がないため、Claude Codeに書きかえさせる場合はシェルから書きかえる。
+Claude CodeとCodexのhookには許可の手段がないため、エージェントに書きかえさせる場合はシェルから書きかえる。
 
 ## 開発
 

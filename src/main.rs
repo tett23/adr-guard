@@ -4,6 +4,7 @@
 //!
 //! - `adr-guard pre-commit [--allow-status] [--allow-links]`: gitのpre-commit hookとして、ステージされた変更を検査する。
 //! - `adr-guard claude-hook [--allow-status]`: Claude CodeのPreToolUse hookとして、Write/Edit/MultiEditを検査する。
+//! - `adr-guard codex-hook [--allow-status]`: CodexのPreToolUse hookとして、apply_patchのパッチを検査する（ADR 0021）。
 //! - `adr-guard check-range [--allow-status] [--allow-links] <base> <head>`: CIで、範囲内の各コミットを検査する。
 //! - `adr-guard list [--status]`、`adr-guard proposed [--status]`: ADRと、ステータスが提案のADRを一覧する（ADR 0005、0006、0007）。
 //! - `adr-guard unimplemented [--status]`: ステータスが `採択（未実装）` のADRを一覧する（ADR 0016）。
@@ -14,6 +15,7 @@
 
 mod links;
 mod numbers;
+mod patch;
 mod status;
 
 use std::collections::HashSet;
@@ -29,11 +31,11 @@ const ALLOW_ENV: &str = "ADR_GUARD_ALLOW";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
 const RECORD_ADVICE: &str = "記録を直す場合は、新しい記録を作成してください。";
 const LINKS_ADVICE: &str = "adr-guard links --fix で修正できます。コミット済みのADRは --fix --include-committed で修正し、検査に --allow-links を付けてコミットしてください。";
-const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links] [--allow-renumber]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] [--allow-renumber] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|check-numbers|renumber [--dry-run]|--version|--help>";
+const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links] [--allow-renumber]|claude-hook [--allow-status]|codex-hook [--allow-status]|check-range [--allow-status] [--allow-links] [--allow-renumber] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|check-numbers|renumber [--dry-run]|--version|--help>";
 const HELP: &str = "\
 コミット済みのADR（Architecture Decision Record）を変更できないようにするツール。
 ステータスの行の変更（--allow-status）と、リンクだけの変更（--allow-links）は、オプションで許可できる。
-gitのpre-commit hook、Claude CodeのPreToolUse hook、CI（GitHub Actions）の3か所で検査する。
+gitのpre-commit hook、Claude CodeとCodexのPreToolUse hook、CI（GitHub Actions）で検査する。
 
 ADRとステータス:
   ADRは、リポジトリのルートからの相対パスのどこかに docs/adr/ または docs/<モジュール>/adr/ があり、その下にあるファイル。
@@ -94,6 +96,13 @@ ADRとステータス:
     Claude CodeのPreToolUse hook（matcher: Write|Edit|MultiEdit）から呼ぶ。標準入力のJSONを読み、
     コミット済みのADRを変える編集を拒否する。
     --allow-status  ステータスの行だけを変える編集を許可する。
+    終了コード: 0 許可、2 拒否（理由を標準エラーに表示）
+
+  adr-guard codex-hook [--allow-status]
+    CodexのPreToolUse hook（matcher: ^(apply_patch|Bash)$）から呼ぶ。標準入力のJSONを読み、
+    apply_patch のパッチと、パッチを含む Bash のコマンドのうち、コミット済みのADRと記録を
+    変えるもの・削除するもの・移動するものを拒否する。書きかえは消す行と足す行だけで判定する。
+    --allow-status  消す行と足す行がすべてステータスの行である書きかえを許可する。
     終了コード: 0 許可、2 拒否（理由を標準エラーに表示）
 
   adr-guard check-range <base> <head> [--allow-status] [--allow-links] [--allow-renumber]
@@ -157,7 +166,7 @@ ADRとステータス:
   オプションは、サブコマンドの後ろならどの位置に置いてもよい。
 
 意図してADRや記録を書きかえる場合:
-  --allow-status         ステータスの行の変更を許可する。hook、Claude Codeのhook、CIで常に付けてよい。
+  --allow-status         ステータスの行の変更を許可する。hook、Claude CodeとCodexのhook、CIで常に付けてよい。
   --allow-links          リンクを付ける・外す・リンク先を変えるだけの変更を許可する。hookとCIで常に付けてよい。
   ADR_GUARD_ALLOW=<理由>  環境変数。pre-commit で、ADRと記録のどんな書きかえも許可する。
                          同じhookのほかの検査は迂回しない。リンクの検査は許可しない。
@@ -168,7 +177,7 @@ ADRとステータス:
 終了コード:
   0   成功
   1   違反あり、または実行の失敗（gitのリポジトリの外など）
-  2   claude-hook での拒否
+  2   claude-hook、codex-hook での拒否
   64  引数の誤り（使い方の1行を標準エラーに表示する）
 
 例:
@@ -177,6 +186,9 @@ ADRとステータス:
 
   # Claude Codeの .claude/settings.json の PreToolUse hook の command
   adr-guard claude-hook --allow-status
+
+  # Codexの .codex/hooks.json の PreToolUse hook の command
+  adr-guard codex-hook --allow-status
 
   # CI（GitHub Actions）。actionを使う場合は uses: tett23/adr-guard@<タグ> と
   # with: の allow-status: true、allow-links: true
@@ -219,6 +231,9 @@ enum Subcommand<'a> {
     ClaudeHook {
         allow: Allow,
     },
+    CodexHook {
+        allow: Allow,
+    },
     CheckRange {
         base: &'a str,
         head: &'a str,
@@ -256,7 +271,7 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
     let accepted: &[&str] = match command.as_str() {
         "pre-commit" | "check-range" => &["--allow-status", "--allow-links", "--allow-renumber"],
         "renumber" => &["--dry-run"],
-        "claude-hook" => &["--allow-status"],
+        "claude-hook" | "codex-hook" => &["--allow-status"],
         "list" | "proposed" | "unimplemented" => &["--status"],
         "links" => &["--fix", "--include-committed"],
         _ => &[],
@@ -274,6 +289,7 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
     match (command.as_str(), positional.as_slice()) {
         ("pre-commit", []) => Some(Subcommand::PreCommit { allow }),
         ("claude-hook", []) => Some(Subcommand::ClaudeHook { allow }),
+        ("codex-hook", []) => Some(Subcommand::CodexHook { allow }),
         ("check-range", [base, head]) => Some(Subcommand::CheckRange { base, head, allow }),
         ("list", []) => Some(Subcommand::List {
             status: has("--status"),
@@ -304,6 +320,7 @@ fn main() -> ExitCode {
     match parse_args(&args) {
         Some(Subcommand::PreCommit { allow }) => pre_commit(allow),
         Some(Subcommand::ClaudeHook { allow }) => claude_hook(allow),
+        Some(Subcommand::CodexHook { allow }) => codex_hook(allow),
         Some(Subcommand::CheckRange { base, head, allow }) => check_range(base, head, allow),
         Some(Subcommand::List { status }) => list(status),
         Some(Subcommand::Proposed { status }) => proposed(status),
@@ -416,6 +433,17 @@ fn change_violation(path: &str, allow: Allow) -> String {
     }
 }
 
+/// コミット済みのADRか記録を削除・移動したときのメッセージ（ADR 0013）。
+fn removal_violation(path: &str, record: bool) -> String {
+    if record {
+        format!(
+            "コミット済みの記録（docs/audit/、docs/audits/、docs/benchmarks/、docs/benchmark/）は削除・移動できません: {path}"
+        )
+    } else {
+        format!("コミット済みのADRは削除・移動できません: {path}")
+    }
+}
+
 /// コミット済みの記録を変更したときのメッセージ（ADR 0013）。
 fn record_change_violation(path: &str) -> String {
     format!(
@@ -490,10 +518,7 @@ fn violations(
                 (!allowed_change(&old, &new, allow)).then(|| change_violation(path, allow))
             }
             ("M", true) => Some(record_change_violation(path)),
-            (_, false) => Some(format!("コミット済みのADRは削除・移動できません: {path}")),
-            (_, true) => Some(format!(
-                "コミット済みの記録（docs/audit/、docs/audits/、docs/benchmarks/、docs/benchmark/）は削除・移動できません: {path}"
-            )),
+            (_, record) => Some(removal_violation(path, record)),
         };
         if let Some(message) = message {
             violations.push(Violation { record, message });
@@ -1214,6 +1239,146 @@ fn claude_hook(allow: Allow) -> ExitCode {
         (change_violation(&rel_path, allow), ADVICE)
     };
     eprintln!("{message}\n{advice}");
+    ExitCode::from(2)
+}
+
+/// コミット済みのADRか記録のHEADの内容と、記録かどうか。対象外ならNone（ADR 0021）。
+struct Committed {
+    rel_path: String,
+    content: Vec<u8>,
+    record: bool,
+}
+
+fn committed(root: &Path, base: &Path, path: &str) -> Option<Committed> {
+    let abs_path = resolve(&base.join(path));
+    let rel_path = abs_path
+        .strip_prefix(root)
+        .ok()?
+        .to_string_lossy()
+        .into_owned();
+    let record = is_record_path(&rel_path);
+    if !is_adr_path(&rel_path) && !record {
+        return None;
+    }
+    let content = git(&["show", &format!("HEAD:{rel_path}")], root)?;
+    Some(Committed {
+        rel_path,
+        content,
+        record,
+    })
+}
+
+/// パッチの1つのハンクの違反（メッセージと、記録かどうか）。
+fn hunk_violations(
+    hunk: &patch::Hunk,
+    root: &Path,
+    base: &Path,
+    allow: Allow,
+) -> Vec<(String, bool)> {
+    let find = |path: &str| committed(root, base, path);
+    let removal = |c: Committed| (removal_violation(&c.rel_path, c.record), c.record);
+    let change = |c: &Committed| {
+        let message = if c.record {
+            record_change_violation(&c.rel_path)
+        } else {
+            change_violation(&c.rel_path, allow)
+        };
+        (message, c.record)
+    };
+    match hunk {
+        patch::Hunk::Add { path, contents } => find(path)
+            .filter(|c| {
+                if c.record {
+                    c.content != contents.as_bytes()
+                } else {
+                    !allowed_change(&c.content, contents.as_bytes(), allow)
+                }
+            })
+            .map(|c| change(&c))
+            .into_iter()
+            .collect(),
+        patch::Hunk::Delete { path } => find(path).map(removal).into_iter().collect(),
+        patch::Hunk::Update {
+            path,
+            move_to: Some(to),
+            ..
+        } => [path, to]
+            .into_iter()
+            .filter_map(|p| find(p))
+            .map(removal)
+            .collect(),
+        patch::Hunk::Update {
+            path,
+            move_to: None,
+            removed,
+            added,
+        } => find(path)
+            .filter(|c| {
+                let status_only = allow.status
+                    && !c.record
+                    && removed
+                        .iter()
+                        .chain(added)
+                        .all(|line| status::is_status_line(line.as_bytes()));
+                let unchanged = removed.is_empty() && added.is_empty();
+                !(status_only || unchanged)
+            })
+            .map(|c| change(&c))
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// Codex の PreToolUse hook（ADR 0021）。`apply_patch` と、パッチを含む `Bash` を検査する。
+fn codex_hook(allow: Allow) -> ExitCode {
+    let mut stdin = String::new();
+    if std::io::stdin().read_to_string(&mut stdin).is_err() {
+        return ExitCode::SUCCESS;
+    }
+    let Ok(payload) = serde_json::from_str::<Value>(&stdin) else {
+        return ExitCode::SUCCESS;
+    };
+    if !matches!(payload["tool_name"].as_str(), Some("apply_patch" | "Bash")) {
+        return ExitCode::SUCCESS;
+    }
+    let Some(hunks) = payload["tool_input"]["command"]
+        .as_str()
+        .and_then(patch::parse)
+    else {
+        return ExitCode::SUCCESS;
+    };
+    let Some(base) = payload["cwd"]
+        .as_str()
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+    else {
+        return ExitCode::SUCCESS;
+    };
+    let Some(top) = git(&["rev-parse", "--show-toplevel"], &base) else {
+        return ExitCode::SUCCESS;
+    };
+    let root = resolve(Path::new(String::from_utf8_lossy(&top).trim()));
+
+    let violations: Vec<(String, bool)> = hunks
+        .iter()
+        .flat_map(|hunk| hunk_violations(hunk, &root, &base, allow))
+        .collect();
+    if violations.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    let messages = violations.iter().map(|(message, _)| message.as_str());
+    let advice = [
+        violations
+            .iter()
+            .any(|(_, record)| !record)
+            .then_some(ADVICE),
+        violations
+            .iter()
+            .any(|(_, record)| *record)
+            .then_some(RECORD_ADVICE),
+    ];
+    let text: Vec<&str> = messages.chain(advice.into_iter().flatten()).collect();
+    eprintln!("{}", text.join("\n"));
     ExitCode::from(2)
 }
 

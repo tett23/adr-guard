@@ -24,20 +24,20 @@
   - `破棄…`、`Discarded`：Discarded
   - `廃止…`、`Deprecated`：Deprecated
 - コミット済みのADRの変更、削除、リネームを違反とする。新規追加は許可する。
-- 変更は、`pre-commit`、`check-range`、`claude-hook` のオプションで許可できる。変更の前後の内容に次の処理を施してから比較し、一致すれば許可する。どちらも付けなければ、前後がまったく同じときだけ許可する。
-  - `--allow-status`（[ADR 0010](adr/0010-allow-status-option.md)、[0012](adr/0012-status-line-and-status-adt.md)）：ステータスの行（`ステータス:` と `Status:` で始まるすべての行）を取り除く。値と見出しの変更、ステータスの行が無かったADRへの追加、ステータスの行の位置の変更が許可される。`claude-hook` も受け付ける。
-  - `--allow-links`（[ADR 0009](adr/0009-require-links-for-adr-references.md)、[0015](adr/0015-allow-link-changes.md)）：下記のとおり、リンクに関する違いを取り除く。`claude-hook` は受け付けない。
+- 変更は、`pre-commit`、`check-range`、`claude-hook`、`codex-hook` のオプションで許可できる。変更の前後の内容に次の処理を施してから比較し、一致すれば許可する。どちらも付けなければ、前後がまったく同じときだけ許可する。
+  - `--allow-status`（[ADR 0010](adr/0010-allow-status-option.md)、[0012](adr/0012-status-line-and-status-adt.md)）：ステータスの行（`ステータス:` と `Status:` で始まるすべての行）を取り除く。値と見出しの変更、ステータスの行が無かったADRへの追加、ステータスの行の位置の変更が許可される。`claude-hook` と `codex-hook` も受け付ける。
+  - `--allow-links`（[ADR 0009](adr/0009-require-links-for-adr-references.md)、[0015](adr/0015-allow-link-changes.md)）：下記のとおり、リンクに関する違いを取り除く。`claude-hook` と `codex-hook` は受け付けない。
 - 違反のメッセージは、`--allow-status` があれば `コミット済みのADRはステータスの行以外を変更できません: <パス>`、なければ `コミット済みのADRは変更できません（ステータスの行の変更は --allow-status で許可できます）: <パス>`。
 - 監査や計測の記録も保護する（[ADR 0013](adr/0013-protect-audit-and-benchmark-records.md)）。
   - 記録は、ADRのパスと同じ形で `<名前>` が `audit`、`audits`、`benchmarks`、`benchmark` のいずれかのディレクトリ（どの深さの `docs/<名前>/`、`docs/<モジュール>/<名前>/`）以下の、すべてのファイル（[ADR 0014](adr/0014-directory-name-variants.md)）。大文字の `docs/Benchmarks/` などは対象外。
   - コミット済みの記録の変更、削除、リネームを違反とする。新規追加は許可する。`--allow-status` と `--allow-links` は記録には効かない。
   - 違反のメッセージは `コミット済みの記録（docs/audit/、docs/audits/、docs/benchmarks/、docs/benchmark/）は変更できません: <パス>` と `コミット済みの記録（docs/audit/、docs/audits/、docs/benchmarks/、docs/benchmark/）は削除・移動できません: <パス>`。記録の違反があれば、案内に `記録を直す場合は、新しい記録を作成してください。` を加える。
-  - `pre-commit`、`check-range`、`claude-hook` で検査する。`claude-hook` では、コミット済みの記録の内容を変える編集を終了コード2で拒否する。
+  - `pre-commit`、`check-range`、`claude-hook`、`codex-hook` で検査する。`claude-hook` と `codex-hook` では、コミット済みの記録の内容を変える編集を終了コード2で拒否する。
   - `links --fix` は、コミット済みの記録をコミット済みのADRと同じく既定では書きかえず、`--include-committed` で書きかえたときは `<パス>: コミット済みの記録です。コミットには ADR-Guard-Allow のトレーラーが要ります` を表示する。
 - 意図してADRや記録を書きかえる場合は、次の方法で違反を許可する（[ADR 0008](adr/0008-allow-intentional-adr-rewrites.md)、[0013](adr/0013-protect-audit-and-benchmark-records.md)）。
   - `check-range`：コミットメッセージのトレーラー（最後の段落）に `ADR-Guard-Allow: <理由>` があるコミットでは、ADRと記録の変更・削除・リネームを違反としない。キーの大文字と小文字は区別しない。理由（前後の空白を除いた値）が空なら許可しない。許可したときは `check-range: <コミット>: ADR-Guard-Allow により許可しました: <理由>` を標準エラーに表示する。許可はトレーラーを付けたコミットだけに及ぶ。
   - `pre-commit`：環境変数 `ADR_GUARD_ALLOW` の値（前後の空白を除いたもの）が空でなければ、違反があっても成功し、`pre-commit: ADR_GUARD_ALLOW により許可しました: <値>` を標準エラーに表示する。
-  - `claude-hook` には、環境変数やトレーラーによる許可の手段がない。
+  - `claude-hook` と `codex-hook` には、環境変数やトレーラーによる許可の手段がない。
   - トレーラーは緊急用であり、リンクを付ける・外す・リンク先を直す変更には `--allow-links` を使う。
 - `pre-commit` と `check-range` に `--allow-links` を付けると、コミット済みのADRの変更のうち、リンクだけが異なる変更を許可する（[ADR 0009](adr/0009-require-links-for-adr-references.md)、[0015](adr/0015-allow-link-changes.md)）。変更の前後で、次の処理をしてから比較する（`--allow-status` があれば、さらにステータスの行を取り除く）。
   - インラインのリンク `[テキスト](リンク先)` と参照形式のリンク `[テキスト][ラベル]` を、ADRの参照かどうかによらず、テキストだけに置きかえる。
@@ -61,7 +61,7 @@
 ### サブコマンド
 
 - オプションは、サブコマンドの後ろならどの位置に置いてもよい。同じオプションを2回付けた場合や、受け付けないオプションを付けた場合は引数の誤りとする。
-- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit [--allow-status] [--allow-links] [--allow-renumber]|claude-hook [--allow-status]|check-range [--allow-status] [--allow-links] [--allow-renumber] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|check-numbers|renumber [--dry-run]|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
+- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit [--allow-status] [--allow-links] [--allow-renumber]|claude-hook [--allow-status]|codex-hook [--allow-status]|check-range [--allow-status] [--allow-links] [--allow-renumber] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|check-numbers|renumber [--dry-run]|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
 - `adr-guard --version`、`adr-guard -V`（[ADR 0003](adr/0003-version-and-help-options.md)）
   - `adr-guard <Cargo.toml の version>` の1行を標準出力に表示し、終了コード0で終わる。
 - `adr-guard --help`、`adr-guard -h`（[ADR 0003](adr/0003-version-and-help-options.md)）
@@ -75,6 +75,14 @@
   - Claude CodeのPreToolUse hookとして、標準入力のJSONを読む。Write・Edit・MultiEditを対象とする。
   - 対象ファイルがADRで、かつHEADに存在する場合、ツール実行後の内容を計算してHEADと比較する。違反があれば終了コード2で終わる。
   - それ以外（JSONを読めない、gitリポジトリでない、対象外のファイルなど）は終了コード0で終わる。
+- `adr-guard codex-hook [--allow-status]`（[ADR 0021](adr/0021-codex-hook.md)）
+  - CodexのPreToolUse hookとして、標準入力のJSONを読む。`tool_name` が `apply_patch` か `Bash` のものを対象とし、`tool_input.command` の中のパッチを読む。パッチは、前後の空白を除くと `*** Begin Patch` になる最初の行から、`*** End Patch` になる次の行まで（ヒアドキュメントで包まれたものも読む）。
+  - パッチのパスは、JSON の `cwd`（無ければ現在のディレクトリ）からの相対パスか絶対パスとして解決する。リポジトリのルートは `cwd` で `git rev-parse --show-toplevel` を実行して求める。
+  - パッチのハンクごとに、パスがコミット済みのADRか記録（HEADに存在するもの）なら次のとおり判定する。
+    - `*** Add File:`：新しい内容をHEADと比べる。ADRは上の比べ方（`--allow-status` があればステータスの行を除く）、記録はまったく同じときだけ許可する。
+    - `*** Delete File:`：拒否する。`*** Move to:` のある `*** Update File:` は、元か移動先がコミット済みなら拒否する。
+    - `*** Move to:` の無い `*** Update File:`：消す行（`-`）と足す行（`+`）で判定する。ADRで `--allow-status` があれば、それらがすべてステータスの行のとき許可する。それ以外は、消す行も足す行も無いときだけ許可する。パッチを当てた後の内容は計算しない。
+  - 違反があれば、違反ごとのメッセージ（`claude-hook` と `pre-commit` と同じ文）と案内を標準エラーに表示して終了コード2で終わる。それ以外（JSONを読めない、対象外のツール、パッチが無いか `*** End Patch` で終わらない、gitリポジトリでないなど）は終了コード0で終わる。
 - `adr-guard check-range [--allow-status] [--allow-links] <base> <head>`
   - `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。
   - `<base>` がコミットとして存在しなければ、`<head>` から辿れるすべてのコミットを検査する。
@@ -136,7 +144,7 @@
 
 - 実装の前に `docs/adr/` にADRを作成し、人間のレビューを経てからコミットする。
 - コミット済みのADRはステータスの行を除いて変更できない（このリポジトリのhookとCIは `--allow-status --allow-links` で検査する）。仕様を変更する場合は新しいADRを作成する。
-- このリポジトリでは、開発中の adr-guard 自身（`cargo run`）で、pre-commit hook、Claude Codeのhook、CIの三か所で強制する。
+- このリポジトリでは、開発中の adr-guard 自身（`cargo run`）で、pre-commit hook、Claude Codeのhook（`.claude/settings.json`）、Codexのhook（`.codex/hooks.json`、[ADR 0021](adr/0021-codex-hook.md)）、CIで強制する。
 
 ### CI
 

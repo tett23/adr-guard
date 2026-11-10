@@ -2494,3 +2494,226 @@ mod symlinked_documents {
         );
     }
 }
+
+/// ADR 0021: Codex の PreToolUse hook。
+mod codex_hook {
+    use super::*;
+    use serde_json::{Value, json};
+
+    const AUDIT: &str = "docs/audit/a.md";
+
+    fn codex_repo() -> TempDir {
+        let dir = repo();
+        let p = dir.path();
+        write(p, AUDIT, "ステータス: 提案\n結果\n");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-qm", "audit"]);
+        dir
+    }
+
+    fn run_hook(payload: &Value, options: &[&str], cwd: &Path) -> (i32, String) {
+        let mut child = Command::new(BIN)
+            .arg("codex-hook")
+            .args(options)
+            .current_dir(cwd)
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        (
+            output.status.code().unwrap(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    }
+
+    fn patch(body: &str) -> String {
+        format!("*** Begin Patch\n{body}*** End Patch\n")
+    }
+
+    fn apply_patch(dir: &Path, cwd: &Path, body: &str) -> Value {
+        let _ = dir;
+        json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "apply_patch",
+            "tool_input": {"command": patch(body)},
+            "cwd": cwd,
+        })
+    }
+
+    fn hook(dir: &Path, body: &str, options: &[&str]) -> (i32, String) {
+        run_hook(&apply_patch(dir, dir, body), options, dir)
+    }
+
+    fn update(path: &str, lines: &str) -> String {
+        format!("*** Update File: {path}\n@@\n{lines}")
+    }
+
+    const STATUS: &str = " # ADR 0001: x\n \n-ステータス: 提案\n+ステータス: 採択\n";
+    const BODY: &str = "-本文\n+改変\n";
+
+    #[test]
+    fn status_edit_needs_allow_status() {
+        let dir = codex_repo();
+        let p = dir.path();
+        assert_eq!(hook(p, &update(ADR, STATUS), &["--allow-status"]).0, 0);
+        assert_eq!(hook(p, &update(ADR, STATUS), &[]).0, 2);
+    }
+
+    #[test]
+    fn rejects_body_edit() {
+        let dir = codex_repo();
+        let (code, stderr) = hook(dir.path(), &update(ADR, BODY), &["--allow-status"]);
+        assert_eq!(code, 2);
+        assert!(stderr.contains(ADR), "{stderr}");
+        assert!(
+            stderr.contains("仕様を変更する場合は、新しいADRを作成してください。"),
+            "{stderr}"
+        );
+    }
+
+    #[test]
+    fn add_file_compares_whole_content() {
+        let dir = codex_repo();
+        let p = dir.path();
+        let add = |content: &str| {
+            let lines: String = content.lines().map(|l| format!("+{l}\n")).collect();
+            format!("*** Add File: {ADR}\n{lines}")
+        };
+        assert_eq!(hook(p, &add(CONTENT), &[]).0, 0);
+        assert_eq!(
+            hook(
+                p,
+                &add(&CONTENT.replace("提案", "採択")),
+                &["--allow-status"]
+            )
+            .0,
+            0
+        );
+        assert_eq!(
+            hook(
+                p,
+                &add(&CONTENT.replace("本文", "改変")),
+                &["--allow-status"]
+            )
+            .0,
+            2
+        );
+    }
+
+    #[test]
+    fn rejects_delete() {
+        let dir = codex_repo();
+        let (code, stderr) = hook(
+            dir.path(),
+            &format!("*** Delete File: {ADR}\n"),
+            &["--allow-status"],
+        );
+        assert_eq!(code, 2);
+        assert!(
+            stderr.contains(&format!("コミット済みのADRは削除・移動できません: {ADR}")),
+            "{stderr}"
+        );
+    }
+
+    #[test]
+    fn rejects_moves_from_and_to_committed_adrs() {
+        let dir = codex_repo();
+        let p = dir.path();
+        write(p, "notes.md", "x\n");
+        let from = format!("*** Update File: {ADR}\n*** Move to: docs/adr/0009-y.md\n");
+        let to = format!("*** Update File: notes.md\n*** Move to: {ADR}\n");
+        assert_eq!(hook(p, &from, &["--allow-status"]).0, 2);
+        assert_eq!(hook(p, &to, &["--allow-status"]).0, 2);
+    }
+
+    #[test]
+    fn allows_uncommitted_adrs_and_other_files() {
+        let dir = codex_repo();
+        let p = dir.path();
+        write(p, "docs/adr/0002-b.md", "本文\n");
+        write(p, "README.md", "本文\n");
+        assert_eq!(hook(p, &update("docs/adr/0002-b.md", BODY), &[]).0, 0);
+        assert_eq!(hook(p, &update("README.md", BODY), &[]).0, 0);
+    }
+
+    #[test]
+    fn rejects_record_status_edit() {
+        let dir = codex_repo();
+        let lines = "-ステータス: 提案\n+ステータス: 採択\n 結果\n";
+        let (code, stderr) = hook(dir.path(), &update(AUDIT, lines), &["--allow-status"]);
+        assert_eq!(code, 2);
+        assert!(stderr.contains(AUDIT), "{stderr}");
+        assert!(
+            stderr.contains("記録を直す場合は、新しい記録を作成してください。"),
+            "{stderr}"
+        );
+    }
+
+    #[test]
+    fn reports_only_violating_files() {
+        let dir = codex_repo();
+        let p = dir.path();
+        write(p, "README.md", "本文\n");
+        let body = format!("{}{}", update("README.md", BODY), update(ADR, BODY));
+        let (code, stderr) = hook(p, &body, &["--allow-status"]);
+        assert_eq!(code, 2);
+        assert!(stderr.contains(ADR), "{stderr}");
+        assert!(!stderr.contains("README.md"), "{stderr}");
+    }
+
+    #[test]
+    fn resolves_paths_from_cwd_and_absolute_paths() {
+        let dir = codex_repo();
+        let p = dir.path();
+        let docs = p.join("docs");
+        let relative = apply_patch(p, &docs, &update("adr/0001-x.md", BODY));
+        assert_eq!(run_hook(&relative, &["--allow-status"], p).0, 2);
+        let absolute = p.join(ADR).to_string_lossy().into_owned();
+        assert_eq!(hook(p, &update(&absolute, BODY), &["--allow-status"]).0, 2);
+    }
+
+    #[test]
+    fn reads_patches_in_bash_heredocs() {
+        let dir = codex_repo();
+        let p = dir.path();
+        let bash = |command: String| json!({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": p});
+        let heredoc = format!("apply_patch <<'EOF'\n{}EOF\n", patch(&update(ADR, BODY)));
+        assert_eq!(run_hook(&bash(heredoc), &["--allow-status"], p).0, 2);
+        assert_eq!(
+            run_hook(&bash("ls".to_owned()), &["--allow-status"], p).0,
+            0
+        );
+    }
+
+    #[test]
+    fn ignores_unreadable_input() {
+        let dir = codex_repo();
+        let p = dir.path();
+        let mut child = Command::new(BIN)
+            .arg("codex-hook")
+            .current_dir(p)
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(b"{").unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(0));
+
+        let read = json!({"tool_name": "Read", "tool_input": {"command": patch(&update(ADR, BODY))}, "cwd": p});
+        assert_eq!(run_hook(&read, &[], p).0, 0);
+
+        let unterminated = json!({"tool_name": "apply_patch",
+            "tool_input": {"command": format!("*** Begin Patch\n{}", update(ADR, BODY))}, "cwd": p});
+        assert_eq!(run_hook(&unterminated, &[], p).0, 0);
+
+        let outside = TempDir::new().unwrap();
+        let elsewhere = apply_patch(p, outside.path(), &update(ADR, BODY));
+        assert_eq!(run_hook(&elsewhere, &[], outside.path()).0, 0);
+    }
+}
