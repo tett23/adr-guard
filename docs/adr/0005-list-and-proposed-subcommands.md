@@ -1,6 +1,6 @@
 # ADR 0005: ADRを一覧する `list` と `proposed` サブコマンド
 
-ステータス: 採択→proposed の出力は[ADR 0006](0006-proposed-status-option.md)、list の出力は[ADR 0007](0007-list-status-option.md)、ステータスの判定は[ADR 0012](0012-status-line-and-status-adt.md)
+Status: superseded [{"by":["docs/adr/0006-proposed-status-option.md"],"part":"proposed の出力"},{"by":["docs/adr/0007-list-status-option.md"],"part":"list の出力"},{"by":["docs/adr/0012-status-line-and-status-adt.md"],"part":"ステータスの判定"}]
 
 ## 文脈
 

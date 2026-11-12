@@ -1,6 +1,6 @@
 # ADR 0003: `--version` と `--help` オプションを加える
 
-ステータス: 採択→リリースのバージョンは[ADR 0004](0004-release-version-options-as-patch.md)
+Status: superseded [{"by":["docs/adr/0004-release-version-options-as-patch.md"],"part":"リリースのバージョン"}]
 
 ## 文脈
 

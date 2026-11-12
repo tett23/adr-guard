@@ -1,6 +1,6 @@
 # ADR 0002: モノレポのモジュールごとのADR（`docs/<モジュール>/adr/`）も保護する
 
-ステータス: 採択→ADRのディレクトリの深さは[ADR 0011](0011-nested-adr-directories.md)、ディレクトリの名前は[ADR 0014](0014-directory-name-variants.md)
+Status: superseded [{"by":["docs/adr/0011-nested-adr-directories.md"],"part":"ADRのディレクトリの深さ"},{"by":["docs/adr/0014-directory-name-variants.md"],"part":"ディレクトリの名前"}]
 
 ## 文脈
 

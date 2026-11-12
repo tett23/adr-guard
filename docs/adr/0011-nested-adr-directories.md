@@ -1,6 +1,6 @@
 # ADR 0011: `packages/<パッケージ>/docs/adr/` など、サブディレクトリの中のADRも保護する
 
-ステータス: 採択→ディレクトリの名前は[ADR 0014](0014-directory-name-variants.md)
+Status: superseded [{"by":["docs/adr/0014-directory-name-variants.md"],"part":"ディレクトリの名前"}]
 
 ## 文脈
 

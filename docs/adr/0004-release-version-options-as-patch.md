@@ -1,6 +1,6 @@
 # ADR 0004: [ADR 0003](0003-version-and-help-options.md) の変更を `v0.2.1` としてリリースする
 
-ステータス: 採択
+Status: accepted
 
 ## 文脈
 
