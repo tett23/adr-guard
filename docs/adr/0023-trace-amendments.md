@@ -1,6 +1,6 @@
 # ADR 0023: trace で元の決定から修正ADRをたどる
 
-Status: accepted-pending
+Status: accepted
 
 ## 文脈
 

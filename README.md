@@ -34,6 +34,7 @@ adr-guard は、この規則をgitのpre-commit hook、Claude CodeとCodexのhoo
 | `adr-guard claude-hook [--allow-status]` | Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditによるコミット済みADRの変更を拒否する |
 | `adr-guard codex-hook [--allow-status]` | CodexのPreToolUse hookとして、`apply_patch` のパッチ（シェルから当てるものも含む）によるコミット済みADRの変更・削除・移動を拒否する |
 | `adr-guard check-range <base> <head> [--allow-status] [--allow-links]` | `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。`<base>` が無いコミットならルートコミットから検査する |
+| `adr-guard trace <パス>` | 修正先を深さ優先にたどる。既定の `--list` は4列のTSV、`--graph` は変更部分と修正先を枝線で表示する |
 | `adr-guard list [--status]` | 作業ツリーにあるADR（未コミットのものも含む）のパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する（ステータスの行が無ければステータスは空） |
 | `adr-guard proposed [--status]` | ステータスが提案（`提案…` か `Proposed`）のADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
 | `adr-guard unimplemented [--status]` | ステータスが `accepted-pending` または `採択（未実装）`（か `Accepted (not implemented)`）の、採択されたがまだ実装されていないADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
@@ -184,6 +185,15 @@ ADRとして扱われるため、ステータスの行の検査とリンクの�
 v0.5.0 から、ステータスの行の変更も `--allow-status` を付けたときだけ許可する（[ADR 0010](docs/adr/0010-allow-status-option.md)）。
 v0.4.0 以前から上げる場合は、pre-commit hook、Claude Codeのhook（`~/.claude/settings.json` を含む）、actionのすべてに `--allow-status`（actionは `allow-status: true`）を付ける。
 付けないと、ADRの採択などでステータスの行を変えられなくなる。
+
+### 修正ADRをたどる
+
+`adr-guard trace --graph docs/adr/0001-standalone-adr-guard.md` は、指定した決定のどの部分がどのADRで変わったかを表示する。
+スクリプトからは既定の TSV を使える。次の例は起点から到達した辺の修正先パスを表示する。
+
+```sh
+adr-guard trace docs/adr/0001-standalone-adr-guard.md | awk -F '\t' '$1 == "edge" {print $3}'
+```
 
 ### ステータスの行が無いADRがある場合
 

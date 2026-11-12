@@ -19,6 +19,7 @@ mod numbers;
 mod patch;
 mod revisions;
 mod status;
+mod trace;
 
 use std::collections::HashSet;
 use std::io::{Read, Write};
@@ -33,7 +34,7 @@ const ALLOW_ENV: &str = "ADR_GUARD_ALLOW";
 const ADVICE: &str = "仕様を変更する場合は、新しいADRを作成してください。";
 const RECORD_ADVICE: &str = "記録を直す場合は、新しい記録を作成してください。";
 const LINKS_ADVICE: &str = "adr-guard links --fix で修正できます。コミット済みのADRは --fix --include-committed で修正し、検査に --allow-links を付けてコミットしてください。";
-const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links] [--allow-renumber]|claude-hook [--allow-status]|codex-hook [--allow-status]|check-range [--allow-status] [--allow-links] [--allow-renumber] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|check-numbers|renumber [--dry-run]|--version|--help>";
+const USAGE: &str = "usage: adr-guard <pre-commit [--allow-status] [--allow-links] [--allow-renumber]|claude-hook [--allow-status]|codex-hook [--allow-status]|check-range [--allow-status] [--allow-links] [--allow-renumber] <base> <head>|trace [--list|--graph] <path>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|check-numbers|renumber [--dry-run]|--version|--help>";
 const HELP: &str = "\
 コミット済みのADR（Architecture Decision Record）を変更できないようにするツール。
 ステータスの行の変更（--allow-status）と、リンクだけの変更（--allow-links）は、オプションで許可できる。
@@ -114,6 +115,10 @@ ADRとステータス:
     <base> がコミットとして存在しなければ（0000... など）、<head> から辿れるすべてのコミットを検査する。
     --allow-status, --allow-links, --allow-renumber  pre-commit と同じ。
     終了コード: 0 問題なし、1 違反あり
+
+  adr-guard trace [--list|--graph] <path>
+    指定したADRから修正先をたどる。既定と --list は種別、元のパス、修正先、部分名のTSVを出力する。
+    --graph は変更部分と修正先を枝線で表示する。参照切れや循環は終了コード1で報告する。
 
   adr-guard list [--status]
     作業ツリーにあるADR（未コミットのものも含む）のパスを、1行に1つずつ標準出力に出力する。
@@ -229,6 +234,10 @@ struct Allow {
 }
 
 enum Subcommand<'a> {
+    Trace {
+        path: &'a str,
+        graph: bool,
+    },
     PreCommit {
         allow: Allow,
     },
@@ -274,6 +283,7 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
         .partition(|arg| arg.starts_with("--"));
     let accepted: &[&str] = match command.as_str() {
         "pre-commit" | "check-range" => &["--allow-status", "--allow-links", "--allow-renumber"],
+        "trace" => &["--graph", "--list"],
         "renumber" => &["--dry-run"],
         "claude-hook" | "codex-hook" => &["--allow-status"],
         "list" | "proposed" | "unimplemented" => &["--status"],
@@ -291,6 +301,10 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
         renumber: has("--allow-renumber"),
     };
     match (command.as_str(), positional.as_slice()) {
+        ("trace", [path]) if options.len() <= 1 => Some(Subcommand::Trace {
+            path,
+            graph: has("--graph"),
+        }),
         ("pre-commit", []) => Some(Subcommand::PreCommit { allow }),
         ("claude-hook", []) => Some(Subcommand::ClaudeHook { allow }),
         ("codex-hook", []) => Some(Subcommand::CodexHook { allow }),
@@ -322,6 +336,7 @@ fn parse_args(args: &[String]) -> Option<Subcommand<'_>> {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match parse_args(&args) {
+        Some(Subcommand::Trace { path, graph }) => trace::run(path, graph),
         Some(Subcommand::PreCommit { allow }) => pre_commit(allow),
         Some(Subcommand::ClaudeHook { allow }) => claude_hook(allow),
         Some(Subcommand::CodexHook { allow }) => codex_hook(allow),
