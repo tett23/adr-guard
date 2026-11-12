@@ -1,6 +1,6 @@
 # ADR 0014: ADRと記録のディレクトリの名前の揺れ（`adrs`、`decisions`、`decision`、`audits`、`benchmark`）も認める
 
-ステータス: 採択
+Status: accepted
 
 ## 文脈
 

@@ -1,6 +1,6 @@
 # ADR 0012: `Status:` で始まるステータスの行を認め、ステータスの行を1つに限り、ステータスの値を代数的データ型で表す
 
-ステータス: 採択→状態の一覧は[ADR 0016](0016-accepted-not-implemented-status.md)
+Status: superseded [{"by":["docs/adr/0016-accepted-not-implemented-status.md"],"part":"状態の一覧"}]
 
 ## 文脈
 

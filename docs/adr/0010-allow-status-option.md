@@ -1,6 +1,6 @@
 # ADR 0010: ステータスの行の変更も `--allow-status` オプションで許可する
 
-ステータス: 採択→ステータスの行の判定と正規化は[ADR 0012](0012-status-line-and-status-adt.md)
+Status: superseded [{"by":["docs/adr/0012-status-line-and-status-adt.md"],"part":"ステータスの行の判定と正規化"}]
 
 ## 文脈
 

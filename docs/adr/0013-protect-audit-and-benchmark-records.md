@@ -1,6 +1,6 @@
 # ADR 0013: `docs/audit/` と `docs/benchmarks/` のコミット済みのファイルも変更できないようにする
 
-ステータス: 採択→記録のディレクトリの名前は[ADR 0014](0014-directory-name-variants.md)
+Status: superseded [{"by":["docs/adr/0014-directory-name-variants.md"],"part":"記録のディレクトリの名前"}]
 
 ## 文脈
 
