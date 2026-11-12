@@ -3,6 +3,9 @@
 //! ステータスの行は、行頭が `ステータス:` か `Status:` の行。ADRはステータスの行をちょうど1つ持つ。
 
 use crate::links;
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
+use std::fmt;
 
 /// ステータスの行の見出し（コロンを含む）。
 const LABELS: [&str; 2] = ["ステータス:", "Status:"];
@@ -20,7 +23,7 @@ pub struct StatusLine<'a> {
 }
 
 /// ADRの状態。
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Status {
     /// `提案…`、`Proposed`。レビュー待ち
     Proposed,
@@ -41,13 +44,139 @@ pub enum Status {
 }
 
 /// 後のADRによる変更の1つ（現時点では出力に使わない）。
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(not(test), allow(dead_code))]
 pub struct Change {
     /// 変わった部分。全体が変わった場合や書かれていない場合はNone
     pub part: Option<String>,
     /// 変更したADRの番号（4桁の数字）
     pub by: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AdrState {
+    Absent,
+    Present(Status),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Transition {
+    Propose,
+    Accept,
+    AcceptPending,
+    Reject,
+    Discard,
+    Complete,
+    Revise {
+        origin: ReviseOrigin,
+        changes: Vec<Change>,
+    },
+    UpdateRevisions {
+        old: Vec<Change>,
+        new: Vec<Change>,
+    },
+    Deprecate {
+        origin: DeprecateOrigin,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReviseOrigin {
+    Accepted,
+    Pending,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DeprecateOrigin {
+    Accepted,
+    Pending,
+    Superseded(Vec<Change>),
+}
+
+impl Transition {
+    #[cfg(test)]
+    pub fn endpoints(self) -> (AdrState, AdrState) {
+        use AdrState::{Absent, Present};
+        use Status::{
+            Accepted, AcceptedNotImplemented, Deprecated, Discarded, Proposed, Rejected, Superseded,
+        };
+        match self {
+            Self::Propose => (Absent, Present(Proposed)),
+            Self::Accept => (Present(Proposed), Present(Accepted)),
+            Self::AcceptPending => (Present(Proposed), Present(AcceptedNotImplemented)),
+            Self::Reject => (Present(Proposed), Present(Rejected)),
+            Self::Discard => (Present(Proposed), Present(Discarded)),
+            Self::Complete => (Present(AcceptedNotImplemented), Present(Accepted)),
+            Self::Revise { origin, changes } => (
+                Present(match origin {
+                    ReviseOrigin::Accepted => Accepted,
+                    ReviseOrigin::Pending => AcceptedNotImplemented,
+                }),
+                Present(Superseded(changes)),
+            ),
+            Self::UpdateRevisions { old, new } => {
+                (Present(Superseded(old)), Present(Superseded(new)))
+            }
+            Self::Deprecate { origin } => (
+                Present(match origin {
+                    DeprecateOrigin::Accepted => Accepted,
+                    DeprecateOrigin::Pending => AcceptedNotImplemented,
+                    DeprecateOrigin::Superseded(changes) => Superseded(changes),
+                }),
+                Present(Deprecated),
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Classification {
+    Unchanged,
+    Direct(Transition),
+    Unclassified,
+}
+
+pub fn classify(before: AdrState, after: AdrState) -> Classification {
+    use AdrState::{Absent, Present};
+    use Classification::{Direct, Unchanged, Unclassified};
+    use Status::{
+        Accepted, AcceptedNotImplemented, Deprecated, Discarded, Proposed, Rejected, Superseded,
+        Unknown,
+    };
+    match (before, after) {
+        (Present(Unknown), _) | (_, Present(Unknown)) => Unclassified,
+        (Absent, Absent) => Unchanged,
+        (Present(old), Present(new)) if old == new => Unchanged,
+        (Absent, Present(Proposed)) => Direct(Transition::Propose),
+        (Present(Proposed), Present(Accepted)) => Direct(Transition::Accept),
+        (Present(Proposed), Present(AcceptedNotImplemented)) => Direct(Transition::AcceptPending),
+        (Present(Proposed), Present(Rejected)) => Direct(Transition::Reject),
+        (Present(Proposed), Present(Discarded)) => Direct(Transition::Discard),
+        (Present(AcceptedNotImplemented), Present(Accepted)) => Direct(Transition::Complete),
+        (Present(Accepted), Present(Superseded(changes))) => Direct(Transition::Revise {
+            origin: ReviseOrigin::Accepted,
+            changes,
+        }),
+        (Present(AcceptedNotImplemented), Present(Superseded(changes))) => {
+            Direct(Transition::Revise {
+                origin: ReviseOrigin::Pending,
+                changes,
+            })
+        }
+        (Present(Superseded(old)), Present(Superseded(new))) => {
+            Direct(Transition::UpdateRevisions { old, new })
+        }
+        (Present(Accepted), Present(Deprecated)) => Direct(Transition::Deprecate {
+            origin: DeprecateOrigin::Accepted,
+        }),
+        (Present(AcceptedNotImplemented), Present(Deprecated)) => Direct(Transition::Deprecate {
+            origin: DeprecateOrigin::Pending,
+        }),
+        (Present(Superseded(changes)), Present(Deprecated)) => Direct(Transition::Deprecate {
+            origin: DeprecateOrigin::Superseded(changes),
+        }),
+        _ => Unclassified,
+    }
 }
 
 /// 行（改行を含んでもよい）がステータスの行なら、その元の値。
@@ -93,7 +222,21 @@ pub fn count_violations(path: &str, content: &str) -> Vec<String> {
         [] => vec![format!(
             "{path}: ステータスの行がありません（ステータス: または Status: で始まる行が要ります）"
         )],
-        [_] => vec![],
+        [(line, _)] => {
+            let original = content
+                .lines()
+                .nth(line - 1)
+                .unwrap_or_default()
+                .trim_end_matches('\r');
+            if original.starts_with("Status: superseded [") {
+                parse_canonical_line(original)
+                    .err()
+                    .map(|reason| vec![format!("{path}:{line}: {reason}")])
+                    .unwrap_or_default()
+            } else {
+                vec![]
+            }
+        }
         [(first, _), rest @ ..] => rest
             .iter()
             .map(|(line, _)| {
@@ -148,7 +291,11 @@ fn accepted_not_implemented(raw: &str) -> bool {
 
 /// 元の値を状態に変換する。
 pub fn parse(raw: &str) -> Status {
-    if raw.starts_with("提案") {
+    if let Some(status) = parse_canonical_value(raw) {
+        status
+    } else if raw.starts_with("superseded [") {
+        Status::Unknown
+    } else if raw.starts_with("提案") {
         Status::Proposed
     } else if accepted_not_implemented(raw) {
         Status::AcceptedNotImplemented
@@ -176,6 +323,81 @@ pub fn parse(raw: &str) -> Status {
         Status::Deprecated
     } else {
         Status::Unknown
+    }
+}
+
+/// 新形式の行だけを受け付ける。新規または変更された行の検査にも使う。
+pub fn parse_canonical_line(line: &str) -> Result<Status, String> {
+    let raw = line
+        .strip_prefix("Status: ")
+        .ok_or_else(|| "新形式のステータス行は `Status: ` で始めてください".to_owned())?;
+    parse_canonical_value(raw).ok_or_else(|| "新形式のステータス値が不正です".to_owned())
+}
+
+fn parse_canonical_value(raw: &str) -> Option<Status> {
+    let simple = match raw {
+        "proposed" => Some(Status::Proposed),
+        "accepted" => Some(Status::Accepted),
+        "accepted-pending" => Some(Status::AcceptedNotImplemented),
+        "rejected" => Some(Status::Rejected),
+        "discarded" => Some(Status::Discarded),
+        "deprecated" => Some(Status::Deprecated),
+        _ => None,
+    };
+    simple.or_else(|| {
+        let json = raw.strip_prefix("superseded ")?;
+        if !json.starts_with('[') {
+            return None;
+        }
+        let changes: Vec<CanonicalChange> = serde_json::from_str(json).ok()?;
+        (!changes.is_empty())
+            .then(|| Status::Superseded(changes.into_iter().map(|item| item.0).collect()))
+    })
+}
+
+struct CanonicalChange(Change);
+
+impl<'de> Deserialize<'de> for CanonicalChange {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ChangeVisitor;
+
+        impl<'de> Visitor<'de> for ChangeVisitor {
+            type Value = CanonicalChange;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("part と by だけを持つ変更")
+            }
+
+            fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+                let mut part: Option<Option<String>> = None;
+                let mut by: Option<Vec<String>> = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "part" if part.is_none() => part = Some(map.next_value()?),
+                        "by" if by.is_none() => by = Some(map.next_value()?),
+                        "part" | "by" => return Err(de::Error::custom("重複したキー")),
+                        _ => return Err(de::Error::unknown_field(&key, &["part", "by"])),
+                    }
+                }
+                let part = part.ok_or_else(|| de::Error::missing_field("part"))?;
+                let by = by.ok_or_else(|| de::Error::missing_field("by"))?;
+                if part.as_ref().is_some_and(String::is_empty)
+                    || by.is_empty()
+                    || by.iter().any(|path| {
+                        path.starts_with('/')
+                            || path.split('/').any(|segment| {
+                                segment.is_empty() || segment == "." || segment == ".."
+                            })
+                            || path.contains('\\')
+                    })
+                {
+                    return Err(de::Error::custom("変更部分または修正先パスが不正です"));
+                }
+                Ok(CanonicalChange(Change { part, by }))
+            }
+        }
+
+        deserializer.deserialize_map(ChangeVisitor)
     }
 }
 
@@ -296,6 +518,164 @@ fn changes_en(rest: &str) -> Vec<Change> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inv1_direct_endpoints() {
+        let cases = [
+            (AdrState::Absent, AdrState::Present(Status::Proposed)),
+            (
+                AdrState::Present(Status::Proposed),
+                AdrState::Present(Status::Accepted),
+            ),
+            (
+                AdrState::Present(Status::Proposed),
+                AdrState::Present(Status::AcceptedNotImplemented),
+            ),
+            (
+                AdrState::Present(Status::Proposed),
+                AdrState::Present(Status::Rejected),
+            ),
+            (
+                AdrState::Present(Status::Proposed),
+                AdrState::Present(Status::Discarded),
+            ),
+            (
+                AdrState::Present(Status::AcceptedNotImplemented),
+                AdrState::Present(Status::Accepted),
+            ),
+            (
+                AdrState::Present(Status::Accepted),
+                AdrState::Present(Status::Superseded(vec![change(
+                    None,
+                    &["docs/adr/0002-x.md"],
+                )])),
+            ),
+            (
+                AdrState::Present(Status::AcceptedNotImplemented),
+                AdrState::Present(Status::Superseded(vec![change(
+                    None,
+                    &["docs/adr/0002-x.md"],
+                )])),
+            ),
+            (
+                AdrState::Present(Status::Superseded(vec![change(
+                    None,
+                    &["docs/adr/0002-x.md"],
+                )])),
+                AdrState::Present(Status::Superseded(vec![change(
+                    None,
+                    &["docs/adr/0003-y.md"],
+                )])),
+            ),
+            (
+                AdrState::Present(Status::Accepted),
+                AdrState::Present(Status::Deprecated),
+            ),
+            (
+                AdrState::Present(Status::AcceptedNotImplemented),
+                AdrState::Present(Status::Deprecated),
+            ),
+            (
+                AdrState::Present(Status::Superseded(vec![change(
+                    None,
+                    &["docs/adr/0002-x.md"],
+                )])),
+                AdrState::Present(Status::Deprecated),
+            ),
+        ];
+        for (before, after) in cases {
+            match classify(before.clone(), after.clone()) {
+                Classification::Direct(transition) => {
+                    assert_eq!(transition.endpoints(), (before, after))
+                }
+                other => panic!("expected Direct: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn inv2_equivalent_spellings() {
+        assert_eq!(parse("提案"), parse("proposed"));
+        assert_eq!(parse("採択（未実装）"), parse("accepted-pending"));
+        assert_eq!(
+            classify(AdrState::Absent, AdrState::Absent),
+            Classification::Unchanged
+        );
+        assert_eq!(
+            classify(
+                AdrState::Present(parse("提案")),
+                AdrState::Present(parse("proposed"))
+            ),
+            Classification::Unchanged
+        );
+    }
+
+    #[test]
+    fn inv3_unclassified_pairs() {
+        assert_eq!(
+            classify(
+                AdrState::Present(Status::Unknown),
+                AdrState::Present(Status::Unknown)
+            ),
+            Classification::Unclassified
+        );
+        assert_eq!(
+            classify(AdrState::Absent, AdrState::Present(Status::Accepted)),
+            Classification::Unclassified
+        );
+        assert_eq!(
+            classify(
+                AdrState::Present(Status::Accepted),
+                AdrState::Present(Status::Proposed)
+            ),
+            Classification::Unclassified
+        );
+    }
+
+    #[test]
+    fn canonical_status_lines() {
+        assert_eq!(
+            parse_canonical_line("Status: accepted-pending"),
+            Ok(Status::AcceptedNotImplemented)
+        );
+        assert_eq!(
+            parse_canonical_line(
+                "Status: superseded [{\"part\":\"状態\",\"by\":[\"docs/adr/0002-x.md\"]}]"
+            ),
+            Ok(Status::Superseded(vec![change(
+                Some("状態"),
+                &["docs/adr/0002-x.md"]
+            )]))
+        );
+        for invalid in [
+            "ステータス: 提案",
+            "Status: 提案",
+            "Status: Accepted",
+            "Status: absent",
+            "Status: superseded []",
+            "Status: superseded  [{\"part\":null,\"by\":[\"docs/adr/0002-x.md\"]}]",
+            "Status: superseded [{\"part\":null,\"by\":[]}]",
+            "Status: superseded [{\"part\":\"\",\"by\":[\"docs/adr/0002-x.md\"]}]",
+            "Status: superseded [{\"part\":null,\"by\":[\"../0002-x.md\"]}]",
+            "Status: superseded [{\"part\":null,\"by\":[\"docs/adr/0002-x.md\"],\"extra\":1}]",
+            "Status: superseded [{\"part\":null,\"part\":null,\"by\":[\"docs/adr/0002-x.md\"]}]",
+        ] {
+            assert!(parse_canonical_line(invalid).is_err(), "{invalid:?}");
+        }
+        let malformed = "Status: superseded [{\"part\":null,\"by\":[]}]\n";
+        assert_eq!(
+            parse("superseded [{\"part\":null,\"by\":[]}]"),
+            Status::Unknown
+        );
+        assert_eq!(count_violations("docs/adr/0001-x.md", malformed).len(), 1);
+        assert!(
+            count_violations("docs/adr/0001-x.md", "Status: Superseded by ADR 0002\n").is_empty()
+        );
+        assert_eq!(
+            parse("Superseded by ADR 0002"),
+            Status::Superseded(vec![change(None, &["0002"])])
+        );
+    }
 
     fn raw(content: &str) -> Option<&str> {
         status(content).map(|line| line.raw)

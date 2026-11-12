@@ -385,6 +385,68 @@ fn references(text: &str) -> Vec<Reference<'_>> {
         .collect()
 }
 
+/// ステータス行のリンク表示文字と、表示文字内のリンク位置・リンク先。
+pub(crate) fn status_text_and_links(raw: &str) -> (String, Vec<(std::ops::Range<usize>, String)>) {
+    let mut text = String::new();
+    let mut links = Vec::new();
+    for segment in segments(raw) {
+        match segment {
+            Segment::InlineLink {
+                raw, text: label, ..
+            } => {
+                let start = text.len();
+                text.push_str(label);
+                let destination = &raw[label.len() + 3..raw.len() - 1];
+                links.push((start..text.len(), destination.to_owned()));
+            }
+            Segment::Text(raw) | Segment::Opaque(raw) | Segment::RefLink { raw, .. } => {
+                text.push_str(raw);
+            }
+        }
+    }
+    (text, links)
+}
+
+/// ステータス行の表示文字内にあるADR参照。番号の開始位置、番号、連続番号かどうか。
+/// 通常の文書の参照規則に加えて `ADR-0001` を認める。
+pub(crate) fn status_reference_numbers(text: &str) -> Vec<(usize, &str, bool)> {
+    let bytes = text.as_bytes();
+    text.match_indices("ADR")
+        .filter(|&(at, _)| at == 0 || !is_word(bytes.get(at - 1)))
+        .filter(|&(at, _)| matches!(bytes.get(at + 3), Some(b' ' | b'-')))
+        .filter_map(|(at, _)| {
+            let number = number_at(text, at + 4)?;
+            let first = Reference {
+                start: at,
+                end: at + 8,
+                number,
+                first: true,
+            };
+            let rest = std::iter::successors(Some(first), |previous| {
+                let at = after_separator(text, previous.end)?;
+                number_at(text, at).map(|number| Reference {
+                    start: at,
+                    end: at + 4,
+                    number,
+                    first: false,
+                })
+            });
+            Some(
+                rest.map(|reference| {
+                    let number_start = if reference.first {
+                        reference.start + 4
+                    } else {
+                        reference.start
+                    };
+                    (number_start, reference.number, reference.first)
+                })
+                .collect::<Vec<_>>(),
+            )
+        })
+        .flatten()
+        .collect()
+}
+
 /// 修飾子を見ない探し方（ADR 0009 の単体テスト）。
 #[cfg(test)]
 struct Unqualified<'a, F> {

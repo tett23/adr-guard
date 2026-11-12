@@ -13,9 +13,11 @@
 //! - `adr-guard check-status`: ADRのステータスの行（`ステータス:` か `Status:`）がちょうど1つあるか検査する（ADR 0012）。
 //! - `adr-guard --version`、`adr-guard --help`: バージョンとヘルプを表示する（ADR 0003、0009）。
 
+mod lifecycle;
 mod links;
 mod numbers;
 mod patch;
+mod revisions;
 mod status;
 
 use std::collections::HashSet;
@@ -45,8 +47,10 @@ ADRとステータス:
   行頭が「ステータス:」または「Status:」の行をステータスの行とする（見出しの大文字・小文字と半角のコロンは
   この形だけ。「- Status:」「* Status:」「status:」は認めない）。ADRはステータスの行をちょうど1つ持つ。
   ステータスの行が無い、または2つ以上あるADRは、pre-commit と check-status で違反になる。
-  値は次の状態として解釈する（英語は大文字・小文字を区別しない）。どれにも当たらない値も違反にはしない:
-    提案…、Proposed                         Proposed: レビュー待ち。コミットせずに置く
+  初回は Status: proposed でコミットする。変更後の値は proposed, accepted-pending, accepted,
+  rejected, discarded, deprecated または superseded と変更の JSON 配列。pre-commit と check-range は
+  許可された状態遷移を検査する。従来の値は次の状態として読み取る:
+    提案…、Proposed                         Proposed: レビュー待ち
     採択…、Accepted                         Accepted: 採択済み
     採択（未実装）…、
     Accepted (not implemented)              AcceptedNotImplemented: 採択されたが、まだ実装されていない。
@@ -80,7 +84,7 @@ ADRとステータス:
     gitのpre-commit hookから呼ぶ。ステージされた変更を検査する。
       - コミット済みのADRの変更（オプションで許可したものを除く）・削除・移動を拒否する。
       - ステージされた .md のファイルの、リンクの無いADRの参照を拒否する。
-    ステージされたADRのステータスの行の数も検査する（初回のコミットでは検査しない）。
+    初回コミットを含めて、ステータス行の数、新しい行の構文、状態遷移を検査する。
     --allow-status  コミット済みのADRで、ステータスの行の変更（値・見出しの変更と、無かった行の追加）を許可する。
     --allow-links   コミット済みのADRで、リンクだけが異なる変更を許可する。ADRの参照に限らず、
                     リンク（インライン・参照形式）を付ける・外す・リンク先を変える変更と、画像のリンク先・
@@ -143,7 +147,7 @@ ADRとステータス:
     終了コード: 0 リンクの無い参照なし（--fix では、修正後に残っていない）、1 残っている
 
   adr-guard check-status
-    作業ツリーのすべてのADR（.md）について、ステータスの行がちょうど1つあるかを検査し、違反を標準エラーに表示する。
+    作業ツリーのすべてのADR（.md）について、ステータスの行がちょうど1つあるか、新形式の修正先JSONが正しいかを検査し、違反を標準エラーに表示する。
     CIから呼ぶ。
     終了コード: 0 違反なし、1 違反あり
 
@@ -169,9 +173,9 @@ ADRとステータス:
   --allow-status         ステータスの行の変更を許可する。hook、Claude CodeとCodexのhook、CIで常に付けてよい。
   --allow-links          リンクを付ける・外す・リンク先を変えるだけの変更を許可する。hookとCIで常に付けてよい。
   ADR_GUARD_ALLOW=<理由>  環境変数。pre-commit で、ADRと記録のどんな書きかえも許可する。
-                         同じhookのほかの検査は迂回しない。リンクの検査は許可しない。
+                         ステータスとリンクの検査は常に行う。
   ADR-Guard-Allow: <理由>  コミットメッセージの最後の段落（トレーラー）。check-range で、そのコミットの
-                         ADRと記録のどんな書きかえも許可する。緊急用であり、通常は使わない。
+                         ADRと記録のどんな書きかえも許可する。ステータスの検査は常に行う。
   ADR_GUARD_ALLOW とトレーラーは、書きかえをほかの変更と分けた1つのコミットに付ける。
 
 終了コード:
@@ -472,19 +476,8 @@ fn violations(
     allow: Allow,
     cwd: &Path,
 ) -> Vec<Violation> {
-    let fields: Vec<String> = diff
-        .split(|&b| b == 0)
-        .filter(|f| !f.is_empty())
-        .map(|f| String::from_utf8_lossy(f).into_owned())
-        .collect();
-
-    let entries: Vec<(&str, &str)> = fields
-        .chunks(2)
-        .filter_map(|pair| match pair {
-            [status, path] => Some((status.as_str(), path.as_str())),
-            _ => None,
-        })
-        .collect();
+    let decoded = String::from_utf8_lossy(diff);
+    let entries = diff_entries(&decoded);
     let renumbered = if allow.renumber {
         renumber_pairs(&entries, old_ref, new_ref, allow, cwd)
     } else {
@@ -525,6 +518,16 @@ fn violations(
         }
     }
     violations
+}
+
+fn diff_entries(diff: &str) -> Vec<(&str, &str)> {
+    let fields: Vec<_> = diff.split_terminator('\0').collect();
+    fields
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|[kind, path]| (*kind, *path))
+        .collect()
 }
 
 /// 削除と追加の組のうち、番号の振りなおし（ADR 0018）とみなせるもの。
@@ -587,13 +590,17 @@ fn renumber_pairs(
 
 fn pre_commit(allow: Allow) -> ExitCode {
     let cwd = Path::new(".");
-    let adr_violations = adr_violations_in_index(allow, cwd);
-    let link_findings = unlinked_in_index();
-    let status_findings = status_violations_in_index(cwd);
-    let (Some(adr_violations), Some(link_findings), Some(status_findings)) =
-        (adr_violations, link_findings, status_findings)
-    else {
+    let Some(diff) = git(
+        &["diff", "--cached", "--name-status", "--no-renames", "-z"],
+        cwd,
+    ) else {
         eprintln!("pre-commit: ステージされた変更を取得できませんでした");
+        return ExitCode::FAILURE;
+    };
+    let adr_violations = violations(&diff, "HEAD", "", allow, cwd);
+    let status_findings = lifecycle::check(&diff, "HEAD", "", allow, cwd);
+    let Some(link_findings) = unlinked_in_index() else {
+        eprintln!("pre-commit: ステージされた文書を取得できませんでした");
         return ExitCode::FAILURE;
     };
 
@@ -630,25 +637,6 @@ fn pre_commit(allow: Allow) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// HEADとインデックスの差分のうち、ADRの規則に違反する変更。HEADが無ければ（初回コミット）空。
-fn adr_violations_in_index(allow: Allow, cwd: &Path) -> Option<Vec<Violation>> {
-    if git(&["rev-parse", "--verify", "-q", "HEAD"], cwd).is_none() {
-        return Some(Vec::new());
-    }
-    let diff = git(
-        &[
-            "diff",
-            "--cached",
-            "--name-status",
-            "--no-renames",
-            "-z",
-            "HEAD",
-        ],
-        cwd,
-    )?;
-    Some(violations(&diff, "HEAD", "", allow, cwd))
-}
-
 /// ステージされた追加・変更の .md のファイルの、ルートからの相対パスとインデックスの内容。
 fn staged_documents(root: &Path) -> Option<Vec<(String, String)>> {
     let staged = git(
@@ -672,22 +660,6 @@ fn staged_documents(root: &Path) -> Option<Vec<(String, String)>> {
                 let content = String::from_utf8_lossy(&content).into_owned();
                 (path, content)
             })
-            .collect(),
-    )
-}
-
-/// ステージされた追加・変更のADRの、ステータスの行の数の違反（ADR 0012）。
-/// HEADが無ければ（初回コミット）検査しない。
-fn status_violations_in_index(cwd: &Path) -> Option<Vec<String>> {
-    if git(&["rev-parse", "--verify", "-q", "HEAD"], cwd).is_none() {
-        return Some(Vec::new());
-    }
-    let (root, _) = work_tree_files()?;
-    Some(
-        staged_documents(&root)?
-            .into_iter()
-            .filter(|(path, _)| is_adr_path(path))
-            .flat_map(|(path, content)| status::count_violations(&path, &content))
             .collect(),
     )
 }
@@ -768,17 +740,15 @@ fn check_range(base: &str, head: &str, allow: Allow) -> ExitCode {
     let mut failed = false;
     for commit in String::from_utf8_lossy(&commits).lines() {
         let parent = format!("{commit}^");
-        if git(&["rev-parse", "--verify", "-q", &parent], cwd).is_none() {
-            // ルートコミットはすべて新規追加
-            continue;
-        }
         let Some(diff) = git(
             &[
-                "diff",
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "-r",
                 "--name-status",
                 "--no-renames",
                 "-z",
-                &parent,
                 commit,
             ],
             cwd,
@@ -788,6 +758,10 @@ fn check_range(base: &str, head: &str, allow: Allow) -> ExitCode {
             continue;
         };
         let short = &commit[..commit.len().min(12)];
+        for message in lifecycle::check(&diff, &parent, commit, allow, cwd) {
+            eprintln!("check-range: {short}: {message}");
+            failed = true;
+        }
         let violations = violations(&diff, &parent, commit, allow, cwd);
         if violations.is_empty() {
             continue;
@@ -803,7 +777,9 @@ fn check_range(base: &str, head: &str, allow: Allow) -> ExitCode {
     }
 
     if failed || !failures.is_empty() {
-        eprintln!("{}", advice(&failures));
+        if !failures.is_empty() {
+            eprintln!("{}", advice(&failures));
+        }
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS

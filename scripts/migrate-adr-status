@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec cargo run --quiet --manifest-path "$script_dir/../Cargo.toml" --example migrate_adr_status -- "$@"

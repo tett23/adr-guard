@@ -1,6 +1,6 @@
 # ADR 0022: 状態と遷移を別々の代数的データ型で表す
 
-Status: accepted-pending
+Status: accepted
 
 ## 文脈
 
