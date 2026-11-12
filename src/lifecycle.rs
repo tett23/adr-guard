@@ -92,7 +92,8 @@ pub(super) fn check(
     allow: Allow,
     cwd: &Path,
 ) -> Vec<String> {
-    let entries = diff_entries(diff);
+    let decoded = String::from_utf8_lossy(diff);
+    let entries = diff_entries(&decoded);
     let renames = if allow.renumber {
         renumber_pairs(&entries, old_tree, new_tree, allow, cwd)
     } else {

@@ -150,92 +150,38 @@ fn qualifier_before(text: &str, at: usize) -> Option<String> {
     .then(|| word.to_owned())
 }
 
-fn references_in(text: &str, destination: Option<&str>) -> Vec<Reference> {
-    let mut refs = Vec::new();
-    if let Some(destination) = destination {
-        let number = text.trim();
-        if number.len() == 4 && number.bytes().all(|b| b.is_ascii_digit()) {
-            return vec![Reference {
+fn references(raw: &str) -> Vec<Reference> {
+    let (text, links) = links::status_text_and_links(raw);
+    let refs: Vec<Reference> = links::status_reference_numbers(&text)
+        .into_iter()
+        .map(|(at, number, first)| {
+            let destination = links
+                .iter()
+                .find(|(range, _)| range.contains(&at))
+                .map(|(_, target)| target.clone());
+            Reference {
+                number: number.to_owned(),
+                qualifier: first.then(|| qualifier_before(&text, at - 4)).flatten(),
+                destination,
+            }
+        })
+        .collect();
+    if !refs.is_empty() {
+        return refs;
+    }
+    let bare = raw.split_once('→').map(|(_, rest)| rest).unwrap_or(raw);
+    let numbers: Option<Vec<_>> = bare
+        .split(['、', ','])
+        .map(|part| {
+            let number = part.trim();
+            (number.len() == 4 && number.bytes().all(|b| b.is_ascii_digit())).then(|| Reference {
                 number: number.to_owned(),
                 qualifier: None,
-                destination: Some(destination.to_owned()),
-            }];
-        }
-    }
-    for (at, _) in text.match_indices("ADR ").chain(text.match_indices("ADR-")) {
-        let Some(number) = text.get(at + 4..at + 8) else {
-            continue;
-        };
-        if !number.bytes().all(|b| b.is_ascii_digit()) {
-            continue;
-        }
-        refs.push(Reference {
-            number: number.to_owned(),
-            qualifier: qualifier_before(text, at),
-            destination: destination.map(str::to_owned),
-        });
-        let mut end = at + 8;
-        while let Some(rest) = text.get(end..) {
-            let Some(after) = rest.strip_prefix([',', '、']) else {
-                break;
-            };
-            let skipped = after.trim_start_matches(' ');
-            let Some(next) = skipped.get(..4) else {
-                break;
-            };
-            if !next.bytes().all(|b| b.is_ascii_digit()) {
-                break;
-            }
-            refs.push(Reference {
-                number: next.to_owned(),
-                qualifier: None,
-                destination: destination.map(str::to_owned),
-            });
-            end = text.len() - skipped.len() + 4;
-        }
-    }
-    refs
-}
-
-fn references(raw: &str) -> Vec<Reference> {
-    let mut refs = Vec::new();
-    let mut remainder = raw;
-    while let Some(start) = remainder.find('[') {
-        refs.extend(references_in(&remainder[..start], None));
-        let link = &remainder[start + 1..];
-        let Some(close) = link.find("](") else {
-            remainder = &remainder[start + 1..];
-            continue;
-        };
-        let target = &link[close + 2..];
-        let Some(end) = target.find(')') else {
-            remainder = &remainder[start + 1..];
-            continue;
-        };
-        refs.extend(references_in(&link[..close], Some(&target[..end])));
-        remainder = &target[end + 1..];
-    }
-    refs.extend(references_in(remainder, None));
-    if refs.is_empty() {
-        let bare = raw.split_once('→').map(|(_, rest)| rest).unwrap_or(raw);
-        let numbers: Option<Vec<_>> = bare
-            .split(['、', ','])
-            .map(|part| {
-                let number = part.trim();
-                (number.len() == 4 && number.bytes().all(|b| b.is_ascii_digit())).then(|| {
-                    Reference {
-                        number: number.to_owned(),
-                        qualifier: None,
-                        destination: None,
-                    }
-                })
+                destination: None,
             })
-            .collect();
-        if let Some(numbers) = numbers {
-            return numbers;
-        }
-    }
-    refs
+        })
+        .collect();
+    numbers.unwrap_or_default()
 }
 
 /// 旧形式の変更部分と修正先を維持し、番号をルート相対パスに置き換える。
@@ -272,4 +218,48 @@ pub fn resolve_legacy(doc: &str, raw: &str, adrs: &[String]) -> Result<Vec<Chang
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_refs_keep_mixed_prefix_order() {
+        let adrs = vec!["docs/adr/0002-a.md".into(), "docs/adr/0003-b.md".into()];
+        let changes = resolve_legacy(
+            "docs/adr/0001-x.md",
+            "Superseded by ADR-0002, ADR 0003",
+            &adrs,
+        )
+        .unwrap();
+        assert_eq!(changes[0].by, adrs);
+    }
+
+    #[test]
+    fn old_refs_accept_linked_continuation_and_parentheses() {
+        let adrs = vec![
+            "docs/adr/0002-a(test).md".into(),
+            "docs/adr/0003-b.md".into(),
+        ];
+        let changes = resolve_legacy(
+            "docs/adr/0001-x.md",
+            "採択→[ADR 0002](0002-a(test).md)、[0003](0003-b.md)",
+            &adrs,
+        )
+        .unwrap();
+        assert_eq!(changes[0].by, adrs);
+    }
+
+    #[test]
+    fn old_refs_accept_unlinked_continuation_after_link() {
+        let adrs = vec!["docs/adr/0002-a.md".into(), "docs/adr/0003-b.md".into()];
+        let changes = resolve_legacy(
+            "docs/adr/0001-x.md",
+            "採択→[ADR 0002](0002-a.md)、0003",
+            &adrs,
+        )
+        .unwrap();
+        assert_eq!(changes[0].by, adrs);
+    }
 }

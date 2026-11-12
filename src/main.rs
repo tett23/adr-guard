@@ -476,7 +476,8 @@ fn violations(
     allow: Allow,
     cwd: &Path,
 ) -> Vec<Violation> {
-    let entries = diff_entries(diff);
+    let decoded = String::from_utf8_lossy(diff);
+    let entries = diff_entries(&decoded);
     let renumbered = if allow.renumber {
         renumber_pairs(&entries, old_ref, new_ref, allow, cwd)
     } else {
@@ -519,18 +520,13 @@ fn violations(
     violations
 }
 
-fn diff_entries(diff: &[u8]) -> Vec<(&str, &str)> {
-    let fields: Vec<_> = diff.split(|&b| b == 0).collect();
+fn diff_entries(diff: &str) -> Vec<(&str, &str)> {
+    let fields: Vec<_> = diff.split_terminator('\0').collect();
     fields
         .as_chunks::<2>()
         .0
         .iter()
-        .filter_map(|pair| {
-            Some((
-                std::str::from_utf8(pair[0]).ok()?,
-                std::str::from_utf8(pair[1]).ok()?,
-            ))
-        })
+        .map(|[kind, path]| (*kind, *path))
         .collect()
 }
 
