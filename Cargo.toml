@@ -8,6 +8,7 @@ description = "Protect committed ADRs from being modified, except for the status
 repository = "https://github.com/tett23/adr-guard"
 
 [dependencies]
+serde = "1"
 serde_json = "1"
 
 [dev-dependencies]

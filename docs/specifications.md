@@ -14,8 +14,10 @@
 - 上の `docs/adr/` と `docs/<モジュール>/adr/` は、どの深さにあってもよい。`docs` より前の要素（`packages/server/` など）は空でなければ名前を問わない（[ADR 0011](adr/0011-nested-adr-directories.md)）。例：`packages/server/docs/adr/`、`apps/web/docs/api/adr/`、`src/docs/server/adr/`。
 - `docs/a/b/adr/` のような2段以上のモジュールと、`packages/server/adr/` のように `docs` を挟まない場所は対象外。
 - ステータスの行は、行頭が `ステータス:` か `Status:`（見出しの大文字・小文字は区別し、コロンは半角）の行とする（[ADR 0012](adr/0012-status-line-and-status-adt.md)）。`- Status:`、`* Status:`、`status:`、全角のコロン、行頭の空白は認めない。
-- ADRはステータスの行をちょうど1つ持つ。ステータスの行が無いADRは `<パス>: ステータスの行がありません（ステータス: または Status: で始まる行が要ります）`、2つ以上あるADRは2つ目以降の行ごとに `<パス>:<行>: ステータスの行が2つ以上あります（最初は<行>行目）` を違反とする。`pre-commit`（ステージされた追加・変更のADR。初回のコミットでは検査しない）と `check-status` で検査する。`ADR_GUARD_ALLOW` はこの違反を許可しない。
-- ステータスの値（コロンより後ろの、前後の空白を除いた元の値）は、次の状態として解釈する。日本語は先頭の一致、英語は大文字と小文字を区別せずキーワードの直後が英数字でないときに当たる。どれにも当たらない値は `Unknown` とし、違反にはしない。
+- ADRはステータスの行をちょうど1つ持つ。ステータスの行が無いADRは `<パス>: ステータスの行がありません（ステータス: または Status: で始まる行が要ります）`、2つ以上あるADRは2つ目以降の行ごとに `<パス>:<行>: ステータスの行が2つ以上あります（最初は<行>行目）` を違反とする。`pre-commit`（初回を含むステージされた追加・変更のADR）と `check-status` で検査する。`ADR_GUARD_ALLOW` はこの違反を許可しない。
+- 新規ADRは `Status: proposed` で一度コミットする。採択して実装を待つ場合は `accepted-pending`、採択または実装完了は `accepted`、却下は `rejected`、取り下げは `discarded`、廃止は `deprecated` を使う。修正時は `Status: superseded [{"part":null,"by":["docs/adr/0002-example.md"]}]` のように部分名と修正先パスを書く。初回コミットを含め、pre-commit と check-range は状態遷移を検査する。違反は書き換えの許可オプションやトレーラーでも終了コード1になる（[ADR 0022](adr/0022-status-transitions.md)）。
+- 旧形式はそのまま読み取れる。ステータス行を書き換える際は新形式を使う。移行するには対象リポジトリのルートで adr-guard のソースにある `scripts/migrate-adr-status` を実行して差分を確認し、`--write` で適用する。
+- 旧形式のステータスの値（コロンより後ろの、前後の空白を除いた元の値）は、次の状態として解釈する。日本語は先頭の一致、英語は大文字と小文字を区別せずキーワードの直後が英数字でないときに当たる。どれにも当たらない値は `Unknown` とし、違反にはしない。
   - `提案…`、`Proposed`：Proposed
   - `採択` に0個以上の空白と `→` が続くもの、`Superseded…`：Superseded（後ろの「変わった部分」と変更したADRの番号を解析する。分類には影響しない）
   - `採択` の直後に開き括弧（`（` か `(`）、`未実装`、閉じ括弧（`）` か `)`）が続くもの、`Accepted (not implemented)`（`Accepted` の後の半角の空白は1つあってもなくてもよく、括弧の揺れも同じ）：AcceptedNotImplemented（[ADR 0016](adr/0016-accepted-not-implemented-status.md)）。Superseded と Accepted より先に判定する。

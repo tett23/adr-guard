@@ -94,12 +94,12 @@ mod pre_commit {
     use super::*;
 
     #[test]
-    fn skips_without_head() {
+    fn rejects_missing_status_without_head() {
         let dir = TempDir::new().unwrap();
         git(dir.path(), &["init", "-q"]);
         write(dir.path(), ADR, "x\n");
         git(dir.path(), &["add", "."]);
-        assert!(pre_commit(dir.path()));
+        assert!(!pre_commit(dir.path()));
     }
 
     #[test]
@@ -108,7 +108,7 @@ mod pre_commit {
         write(
             dir.path(),
             ADR,
-            "# ADR 0001: x\n\nステータス: 採択\n\n本文\n",
+            "# ADR 0001: x\n\nStatus: accepted\n\n本文\n",
         );
         git(dir.path(), &["add", "."]);
         assert!(pre_commit(dir.path()));
@@ -144,7 +144,7 @@ mod pre_commit {
     fn allows_new_adr() {
         let dir = repo();
         // ADRにはステータスの行がちょうど1つ要る（ADR 0012）
-        write(dir.path(), "docs/adr/0002-y.md", "ステータス: 提案\n\ny\n");
+        write(dir.path(), "docs/adr/0002-y.md", "Status: proposed\n\ny\n");
         git(dir.path(), &["add", "."]);
         assert!(pre_commit(dir.path()));
     }
@@ -165,7 +165,7 @@ mod pre_commit_module {
         assert!(staged(
             dir.path(),
             MODULE_ADR,
-            &CONTENT.replace("提案", "採択")
+            &CONTENT.replace("ステータス: 提案", "Status: accepted")
         ));
     }
 
@@ -198,7 +198,7 @@ mod pre_commit_module {
         assert!(staged(
             dir.path(),
             "docs/client/adr/0001-y.md",
-            "ステータス: 提案\n\ny\n"
+            "Status: proposed\n\ny\n"
         ));
     }
 
@@ -362,7 +362,7 @@ mod check_range {
     fn allows_adding_adr() {
         let dir = repo();
         let base = rev(dir.path(), "HEAD");
-        let head = commit(dir.path(), "docs/adr/0002-y.md", "y\n");
+        let head = commit(dir.path(), "docs/adr/0002-y.md", "Status: proposed\n\ny\n");
         assert!(check_range(dir.path(), &base, &head));
     }
 
@@ -370,7 +370,11 @@ mod check_range {
     fn allows_status_change() {
         let dir = repo();
         let base = rev(dir.path(), "HEAD");
-        let head = commit(dir.path(), ADR, &ORIGINAL.replace("提案", "採択"));
+        let head = commit(
+            dir.path(),
+            ADR,
+            &ORIGINAL.replace("ステータス: 提案", "Status: accepted"),
+        );
         assert!(check_range(dir.path(), &base, &head));
     }
 
@@ -432,7 +436,11 @@ mod check_range {
     fn allows_module_adr_status_change_and_non_adr_changes() {
         let dir = module_repo();
         let base = rev(dir.path(), "HEAD");
-        commit(dir.path(), MODULE_ADR, &CONTENT.replace("提案", "採択"));
+        commit(
+            dir.path(),
+            MODULE_ADR,
+            &CONTENT.replace("ステータス: 提案", "Status: accepted"),
+        );
         let head = commit(dir.path(), "docs/a/b/adr/0001-x.md", "改変\n");
         assert!(check_range(dir.path(), &base, &head));
     }
@@ -754,6 +762,12 @@ mod allow {
     fn allows_delete_and_rename_with_trailer() {
         for args in [vec!["rm", "-q", ADR], vec!["mv", ADR, "docs/adr/0002-x.md"]] {
             let dir = repo();
+            commit_rewrite(
+                dir.path(),
+                ADR,
+                &CONTENT.replace("ステータス: 提案", "Status: proposed"),
+                "migrate status",
+            );
             let base = rev(dir.path());
             git(dir.path(), &args);
             let head = commit_staged(dir.path(), "change\n\nADR-Guard-Allow: 理由");
@@ -1088,7 +1102,7 @@ mod allow_status {
     use super::*;
     use serde_json::json;
 
-    const ADOPTED: &str = "# ADR 0001: x\n\nステータス: 採択\n\n本文\n";
+    const ADOPTED: &str = "# ADR 0001: x\n\nStatus: accepted\n\n本文\n";
 
     fn run(dir: &Path, args: &[&str]) -> (i32, String) {
         let output = Command::new(BIN)
@@ -1230,7 +1244,11 @@ mod nested {
         git(p, &["add", "-A"]);
         assert!(!pre_commit(p));
 
-        write(p, PACKAGE_ADR, &CONTENT.replace("提案", "採択"));
+        write(
+            p,
+            PACKAGE_ADR,
+            &CONTENT.replace("ステータス: 提案", "Status: accepted"),
+        );
         git(p, &["add", "-A"]);
         assert!(pre_commit(p));
     }
@@ -1379,7 +1397,7 @@ mod status_lines {
         git(p, &["add", "-A"]);
         assert_eq!(run(p, &["pre-commit", "--allow-status"], None).0, 1);
 
-        write(p, "docs/adr/0002-b.md", "ステータス: 提案\n");
+        write(p, "docs/adr/0002-b.md", "Status: proposed\n");
         git(p, &["add", "-A"]);
         assert_eq!(run(p, &["pre-commit", "--allow-status"], None).0, 0);
     }
@@ -1402,7 +1420,7 @@ mod status_lines {
         write(
             p,
             "docs/adr/0002-b.md",
-            &ENGLISH.replace("Proposed", "Accepted"),
+            &ENGLISH.replace("Proposed", "accepted"),
         );
         git(p, &["add", "-A"]);
         assert_eq!(run(p, &["pre-commit"], None).0, 1);
@@ -1422,7 +1440,7 @@ mod status_lines {
             p,
             "docs/adr/0003-c.md",
             // 空行などを足さず、ステータスの行1行だけを加える
-            "# ADR 0003: c\n\nステータス: 採択\n- Status: Accepted\n\nbody\n",
+            "# ADR 0003: c\n\nStatus: accepted\n- Status: Accepted\n\nbody\n",
         );
         git(p, &["add", "-A"]);
         assert_eq!(run(p, &["pre-commit"], None).0, 1);
@@ -1944,7 +1962,7 @@ mod unimplemented {
         write(
             p,
             "docs/adr/0001-a.md",
-            "# ADR\n\nステータス: 採択\n\n本文\n",
+            "# ADR\n\nStatus: accepted\n\n本文\n",
         );
         git(p, &["add", "-A"]);
         assert_eq!(run(p, &["pre-commit", "--allow-status"]).0, 0);
@@ -2590,7 +2608,7 @@ mod codex_hook {
         assert_eq!(
             hook(
                 p,
-                &add(&CONTENT.replace("提案", "採択")),
+                &add(&CONTENT.replace("ステータス: 提案", "Status: accepted")),
                 &["--allow-status"]
             )
             .0,
@@ -2715,5 +2733,140 @@ mod codex_hook {
         let outside = TempDir::new().unwrap();
         let elsewhere = apply_patch(p, outside.path(), &update(ADR, BODY));
         assert_eq!(run_hook(&elsewhere, &[], outside.path()).0, 0);
+    }
+}
+
+#[test]
+fn inv6_pre_commit_transition() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repo();
+    let p = repo.path();
+    write(
+        p,
+        ADR,
+        &CONTENT.replace("ステータス: 提案", "Status: proposed"),
+    );
+    git(p, &["add", ADR]);
+    let hook = p.join(".git/hooks/pre-commit");
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\nexec '{}' pre-commit --allow-status\n", BIN),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(p, &["commit", "-qm", "migrate"]);
+    for state in ["accepted-pending", "accepted"] {
+        write(
+            p,
+            ADR,
+            &CONTENT.replace("ステータス: 提案", &format!("Status: {state}")),
+        );
+        git(p, &["add", ADR]);
+        git(p, &["commit", "-qm", state]);
+    }
+    let head = || {
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(p)
+            .output()
+            .unwrap()
+            .stdout
+    };
+    let accepted = head();
+    write(
+        p,
+        ADR,
+        &CONTENT.replace("ステータス: 提案", "Status: proposed"),
+    );
+    git(p, &["add", ADR]);
+    write(
+        p,
+        ADR,
+        &CONTENT.replace("ステータス: 提案", "Status: accepted"),
+    );
+    let rejected = Command::new("git")
+        .args(["commit", "-qm", "invalid"])
+        .current_dir(p)
+        .env("ADR_GUARD_ALLOW", "intentional")
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert_eq!(head(), accepted);
+    let message = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        message.contains("accepted") && message.contains("proposed") && message.contains(ADR),
+        "{message}"
+    );
+    git(
+        p,
+        &[
+            "commit",
+            "--no-verify",
+            "-qm",
+            "invalid\n\nADR-Guard-Allow: intentional",
+        ],
+    );
+    assert!(
+        !Command::new(BIN)
+            .args(["check-range", "--allow-status", "HEAD^", "HEAD"])
+            .current_dir(p)
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
+#[test]
+fn inv1_propose_new_adr() {
+    for initialized in [false, true] {
+        for (line, valid) in [
+            ("Status: proposed", true),
+            ("Status: accepted", false),
+            ("Status: absent", false),
+            ("ステータス: 提案", false),
+            ("body", false),
+        ] {
+            let dir = TempDir::new().unwrap();
+            let p = dir.path();
+            git(p, &["init", "-q"]);
+            git(p, &["config", "user.email", "test@example.com"]);
+            git(p, &["config", "user.name", "test"]);
+            if initialized {
+                git(
+                    p,
+                    &[
+                        "-c",
+                        "commit.gpgSign=false",
+                        "commit",
+                        "--allow-empty",
+                        "-qm",
+                        "base",
+                    ],
+                );
+            }
+            write(p, ADR, line);
+            git(p, &["add", ADR]);
+            assert_eq!(pre_commit(p), valid, "{line}");
+            git(
+                p,
+                &["-c", "commit.gpgSign=false", "commit", "-qm", "initial ADR"],
+            );
+            let base = if initialized {
+                "HEAD^"
+            } else {
+                "0000000000000000000000000000000000000000"
+            };
+            assert_eq!(
+                Command::new(BIN)
+                    .args(["check-range", base, "HEAD"])
+                    .current_dir(p)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success(),
+                valid,
+                "{line}"
+            );
+        }
     }
 }
