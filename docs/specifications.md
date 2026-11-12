@@ -70,7 +70,7 @@
   - 1行目に `--version` と同じ行、続けて概要と、各サブコマンドとオプションの説明を標準出力に表示し、終了コード0で終わる。
   - サブコマンドごとのヘルプ（`adr-guard pre-commit --help` など）はない。
 - `adr-guard pre-commit [--allow-status] [--allow-links]`
-  - ステージされたADRの変更のうち、HEADに存在するファイルについて、HEADとインデックスの内容を比較する。HEADがない（初回コミット）ならこの比較はしない。
+  - ステージされたADRの変更のうち、HEADに存在するファイルについて、HEADとインデックスの内容を比較する。HEADがない（初回コミット）なら、追加したADRを空のツリーと比較する。
   - ステージされた追加・変更の `.md` のファイルの、インデックスの内容にリンクの無いADRの参照か、修飾子の付いた参照の誤り（[ADR 0019](adr/0019-module-qualified-adr-references.md)）があれば違反とする。参照先の解決には作業ツリーのADRを使う。`ADR_GUARD_ALLOW` はこの違反を許可しない（[ADR 0009](adr/0009-require-links-for-adr-references.md)）。
   - 違反があれば、`pre-commit: ` で始まるメッセージを表示して終了コード1で終わる。
 - `adr-guard claude-hook [--allow-status]`
@@ -106,7 +106,7 @@
   - `--fix` では、コミット済みのADR（ADRのパスにあって `HEAD` に存在するもの）を除いて、参照をリンクに置きかえ、修飾子の付いたリンクを直す。直せない誤り（修飾子の参照先が無いもの）は報告し、終了コード1で終わる。コミット済みのADRに参照が残れば終了コード1で終わる。
   - `--include-committed`（`--fix` と一緒にだけ使える）では、コミット済みのADRも書きかえる。
 - `adr-guard check-status`（[ADR 0012](adr/0012-status-line-and-status-adt.md)）
-  - 作業ツリーのすべてのADR（`.md`）のステータスの行の数を検査し、違反を `check-status: ` に続けて標準エラーに表示する。違反があれば終了コード1、無ければ終了コード0で終わる。
+  - 作業ツリーのすべてのADR（`.md`）のステータス行がちょうど1つあるか、予約した `Status: superseded [` で始まる行が新形式の構文に従うかを検査し、違反を `check-status: ` に続けて標準エラーに表示する。違反があれば終了コード1、無ければ終了コード0で終わる。
 - `adr-guard unimplemented [--status]`（[ADR 0016](adr/0016-accepted-not-implemented-status.md)）
   - ステータスの行がちょうど1つあり、その状態が AcceptedNotImplemented のADRのパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
   - `--status` では、`<ステータス><タブ><パス>` の形で出力する。ステータスは元の値のまま。

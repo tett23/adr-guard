@@ -2870,3 +2870,56 @@ fn inv1_propose_new_adr() {
         }
     }
 }
+
+#[test]
+fn inv4_new_syntax() {
+    let dir = repo();
+    let p = dir.path();
+    for (line, valid) in [
+        ("ステータス: 提案", true),
+        ("Status: 提案", false),
+        ("ステータス: 採択", false),
+        ("Status: Proposed", false),
+        ("Status: proposed", true),
+    ] {
+        write(p, ADR, &format!("{line}\n\n本文を編集\n"));
+        git(p, &["add", ADR]);
+        let result = Command::new(BIN)
+            .arg("pre-commit")
+            .arg("--allow-status")
+            .current_dir(p)
+            .env("ADR_GUARD_ALLOW", "本文の訂正")
+            .output()
+            .unwrap();
+        assert_eq!(result.status.success(), valid, "{line}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn invalid_utf8_adr_name_cannot_hide_deletion() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let dir = repo();
+    let p = dir.path();
+    let path = OsStr::from_bytes(b"docs/adr/0002-\xff.md");
+    let blob = Command::new("git")
+        .args(["rev-parse", &format!("HEAD:{ADR}")])
+        .current_dir(p)
+        .output()
+        .unwrap();
+    let blob = std::str::from_utf8(&blob.stdout).unwrap().trim();
+    let update = |args: &[&str]| {
+        Command::new("git")
+            .arg("update-index")
+            .args(args)
+            .arg(path)
+            .current_dir(p)
+            .status()
+            .unwrap()
+    };
+    assert!(update(&["--add", "--cacheinfo", "100644", blob]).success());
+    git(p, &["commit", "-qm", "existing ADR"]);
+    assert!(update(&["--force-remove", "--"]).success());
+    assert!(!pre_commit(p));
+}
