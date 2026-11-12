@@ -90,7 +90,9 @@ fn resolve_reference(doc: &str, reference: &Reference, adrs: &[String]) -> Resul
         .transpose()?;
     if let Some(linked) = &linked {
         if !adrs.contains(linked) || number_of(linked) != Some(number) {
-            return Err(format!("ADR {number} のリンク先 {linked} がありません、または番号が違います"));
+            return Err(format!(
+                "ADR {number} のリンク先 {linked} がありません、または番号が違います"
+            ));
         }
         let has_qualifier = reference.qualifier.as_deref().is_some_and(|qualifier| {
             qualifier.contains(['/', '-']) || qualifier_dir(doc, qualifier, adrs).is_some()

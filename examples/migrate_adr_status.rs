@@ -9,8 +9,10 @@ mod revisions;
 mod status;
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use tempfile::NamedTempFile;
 
 struct Rewrite {
     path: String,
@@ -114,7 +116,7 @@ fn simple(raw: &str) -> Option<&'static str> {
 
 fn english_superseded_has_only_references(raw: &str) -> bool {
     let text = links::link_texts(raw);
-    let separated = text.replace([',', '、'], " ");
+    let separated = text.replace('、', ",").replace(',', " , ");
     let words: Vec<&str> = separated.split_whitespace().collect();
     let Some(head) = words.first() else {
         return false;
@@ -131,13 +133,21 @@ fn english_superseded_has_only_references(raw: &str) -> bool {
     }
     let mut references = 0;
     while index < words.len() {
+        let separated = words[index] == ",";
+        if separated {
+            index += 1;
+            if index == words.len() {
+                return false;
+            }
+        }
         if words[index] != "ADR" && !words[index].starts_with("ADR-") {
             if words
                 .get(index + 1)
                 .is_some_and(|word| *word == "ADR" || word.starts_with("ADR-"))
             {
                 index += 1;
-            } else if references > 0
+            } else if separated
+                && references > 0
                 && words[index].len() == 4
                 && words[index].bytes().all(|byte| byte.is_ascii_digit())
             {
@@ -266,15 +276,17 @@ fn write_rewrite(root: &Path, rewrite: &Rewrite) -> Result<(), String> {
         return Err(format!("{}: 検査後に内容が変わりました", rewrite.path));
     }
     let metadata = fs::metadata(&target).map_err(|error| format!("{}: {error}", rewrite.path))?;
-    let temporary = target.with_extension(format!("migrate-{}", std::process::id()));
-    fs::write(&temporary, &rewrite.content)
+    let mut temporary =
+        NamedTempFile::new_in(target.parent().expect("ADRには親ディレクトリがある"))
+            .map_err(|error| format!("{}: {error}", rewrite.path))?;
+    temporary
+        .write_all(&rewrite.content)
+        .and_then(|_| temporary.as_file().set_permissions(metadata.permissions()))
         .map_err(|error| format!("{}: {error}", rewrite.path))?;
-    let result = fs::set_permissions(&temporary, metadata.permissions())
-        .and_then(|_| fs::rename(&temporary, &target));
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result.map_err(|error| format!("{}: {error}", rewrite.path))
+    temporary
+        .persist(&target)
+        .map_err(|error| format!("{}: {}", rewrite.path, error.error))?;
+    Ok(())
 }
 
 fn run() -> Result<(), String> {

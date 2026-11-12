@@ -346,6 +346,9 @@ fn parse_canonical_value(raw: &str) -> Option<Status> {
     };
     simple.or_else(|| {
         let json = raw.strip_prefix("superseded ")?;
+        if !json.starts_with('[') {
+            return None;
+        }
         let changes: Vec<CanonicalChange> = serde_json::from_str(json).ok()?;
         (!changes.is_empty())
             .then(|| Status::Superseded(changes.into_iter().map(|item| item.0).collect()))
@@ -650,6 +653,7 @@ mod tests {
             "Status: Accepted",
             "Status: absent",
             "Status: superseded []",
+            "Status: superseded  [{\"part\":null,\"by\":[\"docs/adr/0002-x.md\"]}]",
             "Status: superseded [{\"part\":null,\"by\":[]}]",
             "Status: superseded [{\"part\":\"\",\"by\":[\"docs/adr/0002-x.md\"]}]",
             "Status: superseded [{\"part\":null,\"by\":[\"../0002-x.md\"]}]",
@@ -666,6 +670,10 @@ mod tests {
         assert_eq!(count_violations("docs/adr/0001-x.md", malformed).len(), 1);
         assert!(
             count_violations("docs/adr/0001-x.md", "Status: Superseded by ADR 0002\n").is_empty()
+        );
+        assert_eq!(
+            parse("Superseded by ADR 0002"),
+            Status::Superseded(vec![change(None, &["0002"])])
         );
     }
 

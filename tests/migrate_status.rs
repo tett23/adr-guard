@@ -134,3 +134,17 @@ fn inv5_superseded_annotation_fails() {
     assert!(!result.status.success(), "{result:?}");
     assert!(String::from_utf8_lossy(&result.stderr).contains("0003-bad.md"));
 }
+
+#[test]
+fn inv5_bare_number_without_separator_fails() {
+    let repo = repo();
+    let root = repo.path();
+    write(
+        root,
+        "docs/adr/0003-bad.md",
+        b"Status: Superseded by ADR 0001 2026\n",
+    );
+    let result = migrate(root, &["--write"]);
+    assert!(!result.status.success(), "{result:?}");
+    assert!(String::from_utf8_lossy(&result.stderr).contains("0003-bad.md"));
+}
