@@ -63,7 +63,7 @@
 ### サブコマンド
 
 - オプションは、サブコマンドの後ろならどの位置に置いてもよい。同じオプションを2回付けた場合や、受け付けないオプションを付けた場合は引数の誤りとする。
-- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit [--allow-status] [--allow-links] [--allow-renumber]|claude-hook [--allow-status]|codex-hook [--allow-status]|check-range [--allow-status] [--allow-links] [--allow-renumber] <base> <head>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|check-numbers|renumber [--dry-run]|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
+- 引数が次のいずれでもなければ、使い方の1行（`usage: adr-guard <pre-commit [--allow-status] [--allow-links] [--allow-renumber]|claude-hook [--allow-status]|codex-hook [--allow-status]|check-range [--allow-status] [--allow-links] [--allow-renumber] <base> <head>|trace [--list|--graph] <path>|list [--status]|proposed [--status]|unimplemented [--status]|links [--fix [--include-committed]]|check-status|check-numbers|renumber [--dry-run]|--version|--help>`）を標準エラーに表示して終了コード64で終わる。`--version`、`--help` に余分な引数が付いた場合や、`list`、`proposed` に `--status` 以外の引数が付いた場合も同じ。
 - `adr-guard --version`、`adr-guard -V`（[ADR 0003](adr/0003-version-and-help-options.md)）
   - `adr-guard <Cargo.toml の version>` の1行を標準出力に表示し、終了コード0で終わる。
 - `adr-guard --help`、`adr-guard -h`（[ADR 0003](adr/0003-version-and-help-options.md)）
@@ -89,6 +89,11 @@
   - `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。
   - `<base>` がコミットとして存在しなければ、`<head>` から辿れるすべてのコミットを検査する。
   - 違反したコミットとファイルをすべて表示し、1件でもあれば終了コード1で終わる。
+- `adr-guard trace [--list|--graph] <path>`（[ADR 0023](adr/0023-trace-amendments.md)）
+  - 作業ツリー内の起点からステータス行の修正先を記載順に深さ優先でたどる。パス引数は絶対または呼び出し元からの相対パスで指定し、出力のパスはリポジトリルートからの相対パスとする。
+  - 既定の `--list` はヘッダーなしの4列TSVで種別、元のパス、修正先のパス、部分名を出す。起点は `root` で第三列にそのパスを置き、修正先ごとに `edge` を出す。合流先の子は一度だけ展開する。
+  - `--graph` は枝線で親子関係を描き、合流先に `[表示済み]` を付ける。両形式でフィールド内のバックスラッシュ、タブ、CR、LF はエスケープする。
+  - 正常時は終了コード0とする。到達範囲の循環、参照先の欠落や曖昧さ、読み込みや構文のエラーは標準エラーに出し、標準出力を空にして1で終わる。オプションの併用や引数の過不足は64で終わる。
 - `adr-guard list [--status]`（[ADR 0005](adr/0005-list-and-proposed-subcommands.md)、[0007](adr/0007-list-status-option.md)）
   - 作業ツリーにあるすべてのADRのパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
   - `--status` では、`<ステータス><タブ><パス>` の形で出力する。ステータスは元の値のまま。ステータスの行が無いか2つ以上あるADRはステータスを空にする（行はタブで始まる）。
