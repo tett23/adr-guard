@@ -175,10 +175,21 @@ fn english_superseded_has_only_references(raw: &str) -> bool {
     references > 0
 }
 
+/// 最後の参照の後ろの注記を、最後の変更の注記にする（ADR 0026）。
+fn with_note(mut changes: Vec<status::Change>, raw: &str) -> Vec<status::Change> {
+    if let (Some(last), Some(note)) = (changes.last_mut(), status::legacy_note(raw)) {
+        last.note = Some(note);
+    }
+    changes
+}
+
 fn changes_json(changes: Vec<status::Change>) -> Result<String, String> {
     let values: Vec<_> = changes
         .into_iter()
-        .map(|change| serde_json::json!({"part": change.part, "by": change.by}))
+        .map(|change| match change.note {
+            Some(note) => serde_json::json!({"part": change.part, "by": change.by, "note": note}),
+            None => serde_json::json!({"part": change.part, "by": change.by}),
+        })
         .collect();
     serde_json::to_string(&values).map_err(|error| error.to_string())
 }
@@ -224,7 +235,8 @@ fn replacement(path: &str, line: &str, adrs: &[String]) -> Result<Option<String>
         return Ok(Some(format!("Status: {value}")));
     }
     if let Some(rest) = pending_revisions(raw) {
-        let changes = revisions::resolve_legacy(path, &format!("採択→{rest}"), adrs)?;
+        let legacy = format!("採択→{rest}");
+        let changes = with_note(revisions::resolve_legacy(path, &legacy, adrs)?, &legacy);
         return Ok(Some(format!(
             "Status: superseded-pending {}",
             changes_json(changes)?
@@ -234,7 +246,7 @@ fn replacement(path: &str, line: &str, adrs: &[String]) -> Result<Option<String>
         if !english_superseded_has_only_references(raw) {
             return Err("注記を保全して変換できません".to_owned());
         }
-        let changes = revisions::resolve_legacy(path, raw, adrs)?;
+        let changes = with_note(revisions::resolve_legacy(path, raw, adrs)?, raw);
         return Ok(Some(format!(
             "Status: superseded {}",
             changes_json(changes)?

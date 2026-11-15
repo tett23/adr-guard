@@ -636,25 +636,176 @@ fn part(text: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
+/// 旧形式のステータス行の参照（ADR 0023、0026）。位置はリンクの文字だけを残した文字列の中のもの。
+#[derive(Clone, Debug, PartialEq)]
+pub struct LegacyRef {
+    /// 参照の始まり（`ADR` の位置、続く番号の位置、リンクの文字の始まり）
+    pub start: usize,
+    /// 参照の終わり
+    pub end: usize,
+    /// 4桁の番号
+    pub number: String,
+    /// `ADR` で始まる参照の最初の番号なら、`ADR` の位置（修飾子を探すのに使う）
+    pub adr_at: Option<usize>,
+    /// `ADR 0005、0006` の `0006` のように、前の参照に区切りで続く番号
+    pub continued: bool,
+    /// 参照を含むリンクのリンク先
+    pub destination: Option<String>,
+    /// リンクの参照（ADR 0026）で、リンクの文字の番号がリンク先の番号と合わないもの
+    pub mismatched: bool,
+}
+
+/// リンク先のファイル名の先頭の4桁の数字（`0005-x.md` の `0005`）。
+fn destination_number(destination: &str) -> Option<&str> {
+    let path = destination.split('#').next()?;
+    let name = path.rsplit('/').next()?;
+    let number = name.get(..4)?;
+    (number.bytes().all(|b| b.is_ascii_digit()) && name[4..].starts_with('-')).then_some(number)
+}
+
+/// 前後が数字でない4桁の数字の並び。
+fn four_digit_runs(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    (0..bytes.len().saturating_sub(3))
+        .filter(|&at| {
+            bytes[at..at + 4].iter().all(u8::is_ascii_digit)
+                && (at == 0 || !bytes[at - 1].is_ascii_digit())
+                && !bytes.get(at + 4).is_some_and(u8::is_ascii_digit)
+        })
+        .map(|at| &text[at..at + 4])
+        .collect()
+}
+
+/// リンクの文字だけを残した文字列と、その中の参照（行の中の順）。
+pub fn legacy_refs(raw: &str) -> (String, Vec<LegacyRef>) {
+    let (text, link_list) = links::status_text_and_links(raw);
+    let destination_at = |at: usize| {
+        link_list
+            .iter()
+            .find(|(range, _)| range.contains(&at))
+            .map(|(_, destination)| destination.clone())
+    };
+    let adr_refs: Vec<LegacyRef> = links::status_reference_numbers(&text)
+        .into_iter()
+        .map(|(at, number, first)| LegacyRef {
+            start: if first { at - 4 } else { at },
+            end: at + 4,
+            number: number.to_owned(),
+            adr_at: first.then(|| at - 4),
+            continued: !first,
+            destination: destination_at(at),
+            mismatched: false,
+        })
+        .collect();
+    let link_refs = link_list.iter().filter_map(|(range, destination)| {
+        if adr_refs.iter().any(|r| range.contains(&r.start)) {
+            return None;
+        }
+        let number = destination_number(destination)?;
+        Some(LegacyRef {
+            start: range.start,
+            end: range.end,
+            number: number.to_owned(),
+            adr_at: None,
+            continued: false,
+            destination: Some(destination.clone()),
+            mismatched: four_digit_runs(&text[range.clone()])
+                .iter()
+                .any(|digits| *digits != number),
+        })
+    });
+    let mut refs: Vec<LegacyRef> = adr_refs.iter().cloned().chain(link_refs).collect();
+    refs.sort_by_key(|r| r.start);
+    (text, refs)
+}
+
+/// 二つの参照のあいだが区切りだけか（ADR 0026）。
+fn is_separator(between: &str) -> bool {
+    matches!(between.trim(), "" | "、" | "," | "と" | "および")
+}
+
+/// 最後の参照の後ろの文字列の扱い（ADR 0026）。
+enum Tail {
+    /// 空か、閉じ括弧だけ
+    Empty,
+    /// `は` で終わる。修正先の抜け
+    MissingTarget(String),
+    /// 注記
+    Note(String),
+}
+
+fn tail(text: &str) -> Tail {
+    let trimmed = text.trim_matches(|c: char| c.is_whitespace() || c == '、' || c == ',');
+    if trimmed.chars().all(|c| c == '）' || c == ')') {
+        return Tail::Empty;
+    }
+    let inner = trimmed
+        .strip_prefix(['（', '('])
+        .and_then(|rest| rest.strip_suffix(['）', ')']))
+        .unwrap_or(trimmed)
+        .trim();
+    if inner.ends_with('は') {
+        Tail::MissingTarget(inner.to_owned())
+    } else {
+        Tail::Note(inner.to_owned())
+    }
+}
+
+/// `採択→` より後ろから、変更と、最後の参照の後ろの注記を取り出す（ADR 0026）。
+fn ja_changes(rest: &str) -> (Vec<Change>, Option<String>) {
+    let (text, refs) = legacy_refs(rest);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return (vec![], None);
+    }
+    if refs.is_empty() {
+        let change = match bare_numbers(trimmed) {
+            Some(by) => Change::legacy(None, by),
+            None => Change::legacy(
+                Some(
+                    trimmed
+                        .trim_matches(|c: char| c.is_whitespace() || c == '、')
+                        .to_owned(),
+                ),
+                vec![],
+            ),
+        };
+        return (vec![change], None);
+    }
+    let (changes, last_end) = refs.iter().fold(
+        (Vec::<Change>::new(), 0),
+        |(mut changes, previous_end), reference| {
+            let between = &text[previous_end..reference.start];
+            let join = reference.continued || is_separator(between);
+            match changes.last_mut() {
+                Some(last) if join => last.by.push(reference.number.clone()),
+                _ => changes.push(Change::legacy(
+                    part(between),
+                    vec![reference.number.clone()],
+                )),
+            }
+            (changes, reference.end)
+        },
+    );
+    match tail(&text[last_end..]) {
+        Tail::Empty => (changes, None),
+        Tail::Note(note) => (changes, Some(note)),
+        Tail::MissingTarget(missing) => {
+            let trailing = Change::legacy(part(&missing).or(Some(missing)), vec![]);
+            (changes.into_iter().chain([trailing]).collect(), None)
+        }
+    }
+}
+
 /// `採択→` より後ろから変更を取り出す。
 fn changes_ja(rest: &str) -> Vec<Change> {
-    let text = links::link_texts(rest);
-    let text = text.trim();
-    if text.is_empty() {
-        return vec![];
-    }
-    if let Some(by) = bare_numbers(text) {
-        return vec![Change::legacy(None, by)];
-    }
-    let found = sequences(text);
-    let last_end = found.last().map_or(0, |sequence| sequence.end);
-    let starts = std::iter::once(0).chain(found.iter().map(|sequence| sequence.end));
-    let changes = found.iter().zip(starts).map(|(sequence, from)| {
-        Change::legacy(part(&text[from..sequence.start]), sequence.numbers.clone())
-    });
-    let tail = text[last_end..].trim_matches(|c: char| c.is_whitespace() || c == '、');
-    let trailing = (!tail.is_empty()).then(|| Change::legacy(Some(tail.to_owned()), vec![]));
-    changes.chain(trailing).collect()
+    ja_changes(rest).0
+}
+
+/// 旧形式の `採択→…` の行の、最後の参照の後ろの注記（ADR 0026。移行スクリプトが使う）。
+#[allow(dead_code)]
+pub fn legacy_note(raw: &str) -> Option<String> {
+    superseded_ja(raw).and_then(|rest| ja_changes(rest).1)
 }
 
 /// `Superseded` より後ろから変更を取り出す。
