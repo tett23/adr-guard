@@ -7,7 +7,7 @@
 //! - `adr-guard codex-hook [--allow-status]`: CodexのPreToolUse hookとして、apply_patchのパッチを検査する（ADR 0021）。
 //! - `adr-guard check-range [--allow-status] [--allow-links] <base> <head>`: CIで、範囲内の各コミットを検査する。
 //! - `adr-guard list [--status]`、`adr-guard proposed [--status]`: ADRと、ステータスが提案のADRを一覧する（ADR 0005、0006、0007）。
-//! - `adr-guard unimplemented [--status]`: ステータスが `採択（未実装）` のADRを一覧する（ADR 0016）。
+//! - `adr-guard unimplemented [--status]`: 採択して実装を待つADRを一覧する（ADR 0016、0025）。
 //! - `adr-guard check-numbers`、`adr-guard renumber [--dry-run]`: ADRの番号の重複を検査・修復する（ADR 0018）。
 //! - `adr-guard links [--fix [--include-committed]]`: リンクの無いADRの参照を検査・修正する（ADR 0009）。
 //! - `adr-guard check-status`: ADRのステータスの行（`ステータス:` か `Status:`）がちょうど1つあるか検査する（ADR 0012）。
@@ -49,7 +49,9 @@ ADRとステータス:
   この形だけ。「- Status:」「* Status:」「status:」は認めない）。ADRはステータスの行をちょうど1つ持つ。
   ステータスの行が無い、または2つ以上あるADRは、pre-commit と check-status で違反になる。
   初回は Status: proposed でコミットする。変更後の値は proposed, accepted-pending, accepted,
-  rejected, discarded, deprecated または superseded と変更の JSON 配列。pre-commit と check-range は
+  rejected, discarded, deprecated、または superseded か superseded-pending（実装待ちのまま修正を受けた）と
+  変更の JSON 配列。変更は part、by（パスか https:// の URL）と、省略できる kind
+  （replace、supplement、note）と note を持つ（ADR 0025）。pre-commit と check-range は
   許可された状態遷移を検査する。従来の値は次の状態として読み取る:
     提案…、Proposed                         Proposed: レビュー待ち
     採択…、Accepted                         Accepted: 採択済み
@@ -117,8 +119,9 @@ ADRとステータス:
     終了コード: 0 問題なし、1 違反あり
 
   adr-guard trace [--list|--graph] <path>
-    指定したADRから修正先をたどる。既定と --list は種別、元のパス、修正先、部分名のTSVを出力する。
-    --graph は変更部分と修正先を枝線で表示する。参照切れや循環は終了コード1で報告する。
+    指定したADRから修正先をたどる。既定と --list は種別、元のパス、修正先、部分名、変更の種類、注記の
+    6列のTSVを出力する。--graph は変更部分と修正先を枝線で表示する。URL の修正先と注記はたどらない。
+    参照切れや循環は終了コード1で報告する。
 
   adr-guard list [--status]
     作業ツリーにあるADR（未コミットのものも含む）のパスを、1行に1つずつ標準出力に出力する。
@@ -132,7 +135,8 @@ ADRとステータス:
     終了コード: 0 成功（該当なしでも0）、1 gitのリポジトリの外など
 
   adr-guard unimplemented [--status]
-    ステータスが AcceptedNotImplemented（「採択（未実装）…」か「Accepted (not implemented)」）のADRのパスを、
+    ステータスが AcceptedNotImplemented（「accepted-pending」「採択（未実装）…」「Accepted (not implemented)」）か
+    SupersededPending（「superseded-pending [...]」）のADRのパスを、
     1行に1つずつ標準出力に出力する。採択されたがまだ実装されていないADRを探し、実装するのに使う。
     実装したら、ステータスの行を「採択」に書きかえる（--allow-status で許可される）。
     --status  「<ステータス><タブ><パス>」の形で出力する。
@@ -964,7 +968,12 @@ fn list(with_status: bool) -> ExitCode {
 /// `adr-guard unimplemented [--status]`：ステータスが `採択（未実装）` のADRを一覧する（ADR 0016）。
 fn unimplemented(with_status: bool) -> ExitCode {
     print_adrs("unimplemented", with_status, |line| {
-        line.is_some_and(|line| line.status == status::Status::AcceptedNotImplemented)
+        line.is_some_and(|line| {
+            matches!(
+                line.status,
+                status::Status::AcceptedNotImplemented | status::Status::SupersededPending(_)
+            )
+        })
     })
 }
 

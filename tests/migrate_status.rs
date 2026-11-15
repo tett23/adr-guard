@@ -317,3 +317,41 @@ fn dry_run_inv5_usage() {
         assert_eq!(snapshot(repo.path()), before, "{args:?}");
     }
 }
+
+// ADR 0025: 実装待ちの修正と、URL の修正先の移行。
+
+#[test]
+fn amend_migrate_pending_and_url() {
+    let repo = repo_with(&[
+        (
+            "docs/adr/0001-a.md",
+            "# a\n\nステータス: 採択（未実装）→丸めは [ADR 0002](0002-b.md)\n",
+        ),
+        ("docs/adr/0002-b.md", MIGRATED),
+        (
+            "docs/adr/0003-c.md",
+            "# c\n\nステータス: 採択→言語は [other ADR 0001](https://example.com/docs/adr/0001-x.md)\n",
+        ),
+    ]);
+    let root = repo.path();
+    let first = migrate(root, &["--dry-run"]);
+    assert!(first.status.success(), "{}", stderr(&first));
+    let second = migrate(root, &["--dry-run"]);
+    assert_eq!(first.stdout, second.stdout);
+    let written = migrate(root, &["--write"]);
+    assert!(written.status.success(), "{}", stderr(&written));
+    let a = fs::read_to_string(root.join("docs/adr/0001-a.md")).unwrap();
+    assert!(
+        a.contains(r#"Status: superseded-pending [{"by":["docs/adr/0002-b.md"],"part":"丸め"}]"#)
+            || a.contains(
+                r#"Status: superseded-pending [{"part":"丸め","by":["docs/adr/0002-b.md"]}]"#
+            ),
+        "{a}"
+    );
+    let c = fs::read_to_string(root.join("docs/adr/0003-c.md")).unwrap();
+    assert!(
+        c.contains(r#""by":["https://example.com/docs/adr/0001-x.md"]"#),
+        "{c}"
+    );
+    assert!(c.contains("Status: superseded ["), "{c}");
+}

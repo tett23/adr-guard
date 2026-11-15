@@ -5,11 +5,24 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::revisions;
-use crate::status::{self, Change, Status};
+use crate::status::{self, Change, Kind, Status, Target};
 
 struct Edge {
     part: Option<String>,
-    target: String,
+    /// 修正先。注記の種類では None（ADR 0025）
+    target: Option<String>,
+    kind: Kind,
+    note: Option<String>,
+}
+
+impl Edge {
+    /// たどる先のADRのパス。URL と注記はたどらない（ADR 0025）。
+    fn next(&self) -> Option<&str> {
+        match Target::of(self.target.as_deref()?) {
+            Target::Path(path) => Some(path),
+            Target::Url(_) => None,
+        }
+    }
 }
 
 struct Frame {
@@ -40,12 +53,13 @@ fn edges(root: &Path, path: &str, adrs: &[String]) -> Result<Vec<Edge>, String> 
     let Some(line) = status::status(&content) else {
         return Err(format!("{path}: ステータスの行がちょうど1つ必要です"));
     };
-    if line.raw.starts_with("superseded [") {
+    let canonical = status::is_reserved(line.raw);
+    if canonical {
         status::parse_canonical_line(&format!("Status: {}", line.raw))
             .map_err(|error| format!("{path}: {error}"))?;
     }
     let changes = match line.status {
-        Status::Superseded(changes) if line.raw.starts_with("superseded [") => changes,
+        Status::Superseded(changes) | Status::SupersededPending(changes) if canonical => changes,
         Status::Superseded(_) => revisions::resolve_legacy(path, line.raw, adrs)
             .map_err(|error| format!("{path}: {error}"))?,
         _ => Vec::<Change>::new(),
@@ -53,19 +67,23 @@ fn edges(root: &Path, path: &str, adrs: &[String]) -> Result<Vec<Edge>, String> 
     changes
         .into_iter()
         .flat_map(|change| {
-            change.by.into_iter().map(move |target| Edge {
+            let targets: Vec<Option<String>> = if change.by.is_empty() {
+                vec![None]
+            } else {
+                change.by.iter().cloned().map(Some).collect()
+            };
+            targets.into_iter().map(move |target| Edge {
                 part: change.part.clone(),
                 target,
+                kind: change.kind,
+                note: change.note.clone(),
             })
         })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .map(|edge| {
-            if adrs.contains(&edge.target) {
-                Ok(edge)
-            } else {
-                Err(format!("{path}: 修正先 {} がありません", edge.target))
+        .map(|edge| match edge.next() {
+            Some(next) if !adrs.iter().any(|adr| adr == next) => {
+                Err(format!("{path}: 修正先 {next} がありません"))
             }
+            _ => Ok(edge),
         })
         .collect()
 }
@@ -82,7 +100,7 @@ fn render(root: &Path, start: &str, adrs: &[String], graph: bool) -> Result<Stri
     let mut output = if graph {
         format!("{}\n", escape(start))
     } else {
-        format!("root\t\t{}\t\n", escape(start))
+        format!("root\t\t{}\t\t\t\n", escape(start))
     };
     let mut seen = HashSet::from([start.to_owned()]);
     let mut ancestors = seen.clone();
@@ -101,35 +119,48 @@ fn render(root: &Path, start: &str, adrs: &[String], graph: bool) -> Result<Stri
         let edge = &frame.edges[frame.next];
         let last = frame.next + 1 == frame.edges.len();
         frame.next += 1;
-        if ancestors.contains(&edge.target) {
-            return Err(format!(
-                "{}: {} への参照が循環しています",
-                frame.path, edge.target
-            ));
+        let next = edge.next().map(str::to_owned);
+        if let Some(next) = next.as_ref().filter(|next| ancestors.contains(*next)) {
+            return Err(format!("{}: {next} への参照が循環しています", frame.path));
         }
-        let already_seen = !seen.insert(edge.target.clone());
+        let already_seen = next.as_ref().is_some_and(|next| !seen.insert(next.clone()));
         if graph {
             for later in &frame.later_siblings {
                 output.push_str(if *later { "│   " } else { "    " });
             }
             output.push_str(if last { "└── " } else { "├── " });
             output.push_str(&escape(edge.part.as_deref().unwrap_or("(範囲指定なし)")));
-            output.push_str(" -> ");
-            output.push_str(&escape(&edge.target));
+            match (&edge.target, edge.kind, &edge.note) {
+                (None, _, note) => {
+                    output.push_str(": ");
+                    output.push_str(&escape(note.as_deref().unwrap_or_default()));
+                }
+                (Some(target), kind, note) => {
+                    output.push_str(" -> ");
+                    output.push_str(&escape(target));
+                    if kind == Kind::Supplement {
+                        output.push_str(" (補足)");
+                    }
+                    if let Some(note) = note {
+                        output.push_str(&format!(" ({})", escape(note)));
+                    }
+                }
+            }
             if already_seen {
                 output.push_str(" [表示済み]");
             }
             output.push('\n');
         } else {
             output.push_str(&format!(
-                "edge\t{}\t{}\t{}\n",
+                "edge\t{}\t{}\t{}\t{}\t{}\n",
                 escape(&frame.path),
-                escape(&edge.target),
+                escape(edge.target.as_deref().unwrap_or("")),
                 escape(edge.part.as_deref().unwrap_or("")),
+                edge.kind.name(),
+                escape(edge.note.as_deref().unwrap_or("")),
             ));
         }
-        if !already_seen {
-            let next_path = edge.target.clone();
+        if let Some(next_path) = next.filter(|_| !already_seen) {
             let mut later_siblings = frame.later_siblings.clone();
             later_siblings.push(!last);
             stack.push(Frame {
