@@ -16,7 +16,7 @@
 - ステータスの行は、行頭が `ステータス:` か `Status:`（見出しの大文字・小文字は区別し、コロンは半角）の行とする（[ADR 0012](adr/0012-status-line-and-status-adt.md)）。`- Status:`、`* Status:`、`status:`、全角のコロン、行頭の空白は認めない。
 - ADRはステータスの行をちょうど1つ持つ。ステータスの行が無いADRは `<パス>: ステータスの行がありません（ステータス: または Status: で始まる行が要ります）`、2つ以上あるADRは2つ目以降の行ごとに `<パス>:<行>: ステータスの行が2つ以上あります（最初は<行>行目）` を違反とする。`pre-commit`（初回を含むステージされた追加・変更のADR）と `check-status` で検査する。`ADR_GUARD_ALLOW` はこの違反を許可しない。
 - 新規ADRは `Status: proposed` で一度コミットする。採択して実装を待つ場合は `accepted-pending`、採択または実装完了は `accepted`、却下は `rejected`、取り下げは `discarded`、廃止は `deprecated` を使う。修正時は `Status: superseded [{"part":null,"by":["docs/adr/0002-example.md"]}]` のように部分名と修正先パスを書く。初回コミットを含め、pre-commit と check-range は状態遷移を検査する。違反は書き換えの許可オプションやトレーラーでも終了コード1になる（[ADR 0022](adr/0022-status-transitions.md)）。
-- 旧形式はそのまま読み取れる。ステータス行を書き換える際は新形式を使う。移行するには対象リポジトリのルートで adr-guard のソースにある `scripts/migrate-adr-status` を実行して差分を確認し、`--write` で適用する。
+- 旧形式はそのまま読み取れる。ステータス行を書き換える際は新形式を使う。移行するには対象リポジトリのルートで adr-guard のソースにある `scripts/migrate-adr-status --dry-run` を実行して差分を確認し、`scripts/migrate-adr-status --write` で適用する。引数なしは使い方の誤りになる。どちらのモードも全ADRを調べ、移行できないADRを1件ずつ表示し、最後に `移行できる: N件、移行済み: K件、移行できない: M件` を標準エラーに表示する。移行できないADRが1件でもあれば終了コード1で終わり、`--write` でも何も書き込まない（[ADR 0024](adr/0024-migration-dry-run-and-error-count.md)）。
 - 旧形式のステータスの値（コロンより後ろの、前後の空白を除いた元の値）は、次の状態として解釈する。日本語は先頭の一致、英語は大文字と小文字を区別せずキーワードの直後が英数字でないときに当たる。どれにも当たらない値は `Unknown` とし、違反にはしない。
   - `提案…`、`Proposed`：Proposed
   - `採択` に0個以上の空白と `→` が続くもの、`Superseded…`：Superseded（後ろの「変わった部分」と変更したADRの番号を解析する。分類には影響しない）
