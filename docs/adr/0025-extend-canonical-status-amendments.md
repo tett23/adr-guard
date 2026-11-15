@@ -1,6 +1,6 @@
 # ADR 0025: 新形式のステータス行に、実装待ちの修正、補足、注記、別のリポジトリの修正先を加える
 
-Status: proposed
+Status: accepted-pending
 
 ## 文脈
 
