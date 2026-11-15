@@ -631,8 +631,10 @@ fn bare_numbers(text: &str) -> Option<Vec<String>> {
 fn part(text: &str) -> Option<String> {
     let trimmed = text
         .trim()
-        .trim_start_matches(['、', ','])
+        .trim_start_matches(['、', ',', '。'])
         .trim()
+        .trim_end_matches('→')
+        .trim_end()
         .trim_end_matches('は')
         .trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
@@ -687,10 +689,22 @@ pub fn legacy_refs(raw: &str) -> (String, Vec<LegacyRef>) {
             .find(|(range, _)| range.contains(&at))
             .map(|(_, destination)| destination.clone())
     };
+    let link_start = |at: usize| {
+        link_list
+            .iter()
+            .find(|(range, _)| range.contains(&at))
+            .map(|(range, _)| range.start)
+    };
+    // 参照の始まり。リンクの中ならリンクの文字の始まり、外なら直前の修飾子の始まり（ADR 0028）
+    let reference_start = |adr_at: usize| {
+        link_start(adr_at).unwrap_or_else(|| {
+            qualifier_len(&text[..adr_at]).map_or(adr_at, |len| adr_at - 1 - len)
+        })
+    };
     let adr_refs: Vec<LegacyRef> = links::status_reference_numbers(&text)
         .into_iter()
         .map(|(at, number, first)| LegacyRef {
-            start: if first { at - 4 } else { at },
+            start: if first { reference_start(at - 4) } else { at },
             end: at + 4,
             number: number.to_owned(),
             adr_at: first.then(|| at - 4),
@@ -719,6 +733,54 @@ pub fn legacy_refs(raw: &str) -> (String, Vec<LegacyRef>) {
     let mut refs: Vec<LegacyRef> = adr_refs.iter().cloned().chain(link_refs).collect();
     refs.sort_by_key(|r| r.start);
     (text, refs)
+}
+
+/// `ADR` の直前に半角の空白1つをはさんで置かれた修飾子の語の長さ（ADR 0019、0028）。
+fn qualifier_len(before: &str) -> Option<usize> {
+    let prefix = before.strip_suffix(' ')?;
+    let word_len = prefix
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_alphanumeric() || "._/-".contains(*c))
+        .count();
+    let word = &prefix[prefix.len() - word_len..];
+    let start = word.find(|c: char| c.is_ascii_alphanumeric())?;
+    let word = &word[start..];
+    (!word.is_empty()).then_some(word.len())
+}
+
+/// 移行スクリプトが部分名を決められない旧形式の行の理由（ADR 0028）。
+#[allow(dead_code)]
+pub fn legacy_part_problem(raw: &str) -> Option<&'static str> {
+    let rest = superseded_ja(raw)
+        .map(str::to_owned)
+        .or_else(|| raw.strip_prefix("置換").map(replaced_body))?;
+    let (text, refs) = legacy_refs(&rest);
+    let pairs = refs.iter().zip(refs.iter().skip(1));
+    let continues = pairs.clone().any(|(reference, next)| {
+        let between = &text[reference.end..next.start];
+        !next.continued
+            && !is_separator(between)
+            && !between
+                .trim_start()
+                .starts_with(['、', ',', '。', '）', ')'])
+    });
+    if continues {
+        return Some("参照の後ろに部分名の続きがあります");
+    }
+    let unbalanced = refs
+        .iter()
+        .scan(0, |previous_end, reference| {
+            let segment = &text[*previous_end..reference.start];
+            *previous_end = reference.end;
+            Some(segment)
+        })
+        .any(|segment| {
+            let opened = segment.matches(['（', '(']).count();
+            let closed = segment.matches(['）', ')']).count();
+            opened != closed
+        });
+    unbalanced.then_some("括弧が部分名をまたぎます")
 }
 
 /// 二つの参照のあいだが区切りだけか（ADR 0026）。
@@ -858,6 +920,97 @@ fn changes_en(rest: &str) -> Vec<Change> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ADR 0028
+
+    fn parts(raw: &str) -> Vec<Option<String>> {
+        match parse(raw) {
+            Status::Superseded(changes) => changes.into_iter().map(|c| c.part).collect(),
+            other => panic!("{raw}: {other:?}"),
+        }
+    }
+
+    fn some(part: &str) -> Option<String> {
+        Some(part.to_owned())
+    }
+
+    #[test]
+    fn part_inv1_qualifier() {
+        for raw in [
+            "採択→a は golem-x ADR 0002",
+            "採択→a は [golem-x ADR 0002](../golem-x/adr/0002-b.md)",
+            "採択→a は [x.example ADR 0002](https://x.example/docs/adr/0002-b.md)",
+            "採択→a は docs/adr ADR 0002",
+        ] {
+            assert_eq!(parts(raw), vec![some("a")], "{raw}");
+        }
+        assert_eq!(
+            parts("採択→a は golem-x ADR 0002、b は [golem-y ADR 0003](../golem-y/adr/0003-c.md)"),
+            vec![some("a"), some("b")]
+        );
+    }
+
+    #[test]
+    fn part_inv2_delimiters() {
+        assert_eq!(
+            parts("採択→a は [ADR 0002](0002-b.md)。b は [ADR 0003](0003-c.md)"),
+            vec![some("a"), some("b")]
+        );
+        assert_eq!(parts("採択→a は→[ADR 0002](0002-b.md)"), vec![some("a")]);
+        assert_eq!(
+            parts("採択→a 部分は → [ADR 0002](0002-b.md)"),
+            vec![some("a 部分")]
+        );
+    }
+
+    #[test]
+    fn part_inv4_problems() {
+        assert_eq!(
+            legacy_part_problem("採択→a、[ADR 0002](0002-b.md) の述語、b は [ADR 0003](0003-c.md)"),
+            Some("参照の後ろに部分名の続きがあります")
+        );
+        assert_eq!(
+            legacy_part_problem(
+                "採択→a は x に移した（[ADR 0002](0002-b.md)）、b は [ADR 0003](0003-c.md)"
+            ),
+            Some("括弧が部分名をまたぎます")
+        );
+        assert_eq!(
+            legacy_part_problem(
+                "採択→a は [ADR 0002](0002-b.md) で消した、b は [ADR 0003](0003-c.md)"
+            ),
+            Some("参照の後ろに部分名の続きがあります")
+        );
+        for raw in [
+            "採択→（a の読み方）は [ADR 0002](0002-b.md)",
+            "採択→a は [ADR 0002](0002-b.md) で消した",
+            "採択→a は [ADR 0002](0002-b.md)、b は [ADR 0003](0003-c.md)",
+            "採択→a は [ADR 0002](0002-b.md) と [ADR 0003](0003-c.md)",
+            "採択→a は ADR 0002、0003",
+            "採択→a は [ADR 0002](0002-b.md)（新しい規則）",
+            "置換（[ADR 0002](0002-b.md)）",
+            "採択",
+        ] {
+            assert_eq!(legacy_part_problem(raw), None, "{raw}");
+        }
+    }
+
+    #[test]
+    fn part_inv5_unchanged() {
+        let cases = [
+            ("採択→a は [ADR 0002](0002-b.md)", vec![some("a")]),
+            (
+                "採択→a は [ADR 0002](0002-b.md)、b は [ADR 0003](0003-c.md)",
+                vec![some("a"), some("b")],
+            ),
+            ("採択→A、BはADR 0005、0006", vec![some("A、B")]),
+            ("採択→0004、0009", vec![None]),
+            ("置換（[ADR 0002](0002-b.md)）", vec![None]),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(parts(raw), expected, "{raw}");
+        }
+    }
 
     // ADR 0027
 

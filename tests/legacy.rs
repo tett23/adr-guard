@@ -375,3 +375,107 @@ fn replaced_inv5_migrate_note() {
         serde_json::json!([{"part":null,"by":["docs/adr/0002-b.md"],"note":"で削った"}])
     );
 }
+
+// ADR 0028: 決められない部分名を移行しない。
+
+#[test]
+fn part_inv3_brackets_and_inv4_ambiguous() {
+    let dir = repo();
+    let p = dir.path();
+    let ambiguous = "docs/adr/0010-j.md";
+    let bracket = "docs/adr/0011-k.md";
+    let balanced = "docs/adr/0012-l.md";
+    write(
+        p,
+        ambiguous,
+        "ステータス: 採択→a、[ADR 0002](0002-b.md) の述語、b は [ADR 0003](0003-c.md)",
+    );
+    write(
+        p,
+        bracket,
+        "ステータス: 採択→a は x に移した（[ADR 0002](0002-b.md)）、b は [ADR 0003](0003-c.md)",
+    );
+    write(
+        p,
+        balanced,
+        "ステータス: 採択→（a の読み方）は [ADR 0002](0002-b.md)",
+    );
+    let snapshot =
+        || [ambiguous, bracket, balanced].map(|path| std::fs::read(p.join(path)).unwrap());
+    let before = snapshot();
+    for mode in ["--dry-run", "--write"] {
+        let output = Command::new(SCRIPT)
+            .arg(mode)
+            .current_dir(p)
+            .output()
+            .unwrap();
+        let stderr = text(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{mode}: {stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "{ambiguous}:3: 部分名を決められません: 参照の後ろに部分名の続きがあります"
+            )),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "{bracket}:3: 部分名を決められません: 括弧が部分名をまたぎます"
+            )),
+            "{stderr}"
+        );
+        assert!(!stderr.contains(balanced), "{stderr}");
+        assert_eq!(snapshot(), before, "{mode}");
+    }
+
+    // 括弧の数が等しい行は移る
+    std::fs::remove_file(p.join(ambiguous)).unwrap();
+    std::fs::remove_file(p.join(bracket)).unwrap();
+    let output = Command::new(SCRIPT)
+        .arg("--write")
+        .current_dir(p)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let content = std::fs::read_to_string(p.join(balanced)).unwrap();
+    assert!(content.contains(r#""part":"（a の読み方）""#), "{content}");
+}
+
+#[test]
+fn part_inv4_pre_commit() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = repo();
+    let p = dir.path();
+    let path = "docs/adr/0010-j.md";
+    write(
+        p,
+        path,
+        "ステータス: 採択→a、[ADR 0002](0002-b.md) の述語、b は [ADR 0003](0003-c.md)",
+    );
+    assert!(git(p, &["add", "."]).status.success());
+    assert!(
+        git(p, &["commit", "-q", "--no-verify", "-m", "legacy"])
+            .status
+            .success()
+    );
+    let hook = p.join(".git/hooks/pre-commit");
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\nexec '{BIN}' pre-commit --allow-status\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write(
+        p,
+        path,
+        r#"Status: superseded [{"part":"a、0002 の述語、b","by":["docs/adr/0003-c.md"]}]"#,
+    );
+    assert!(git(p, &["add", "."]).status.success());
+    let output = git(p, &["commit", "-qm", "migrate"]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let range = Command::new(BIN)
+        .args(["check-range", "--allow-status", "HEAD~1", "HEAD"])
+        .current_dir(p)
+        .output()
+        .unwrap();
+    assert!(range.status.success(), "{}", text(&range.stderr));
+}

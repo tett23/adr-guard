@@ -175,6 +175,14 @@ fn english_superseded_has_only_references(raw: &str) -> bool {
     references > 0
 }
 
+/// 部分名を決められない行を移行しない（ADR 0028）。
+fn check_parts(raw: &str) -> Result<(), String> {
+    match status::legacy_part_problem(raw) {
+        Some(reason) => Err(format!("部分名を決められません: {reason}")),
+        None => Ok(()),
+    }
+}
+
 /// 最後の参照の後ろの注記を、最後の変更の注記にする（ADR 0026）。
 fn with_note(mut changes: Vec<status::Change>, raw: &str) -> Vec<status::Change> {
     if let (Some(last), Some(note)) = (changes.last_mut(), status::legacy_note(raw)) {
@@ -236,6 +244,7 @@ fn replacement(path: &str, line: &str, adrs: &[String]) -> Result<Option<String>
     }
     if let Some(rest) = pending_revisions(raw) {
         let legacy = format!("採択→{rest}");
+        check_parts(&legacy)?;
         let changes = with_note(revisions::resolve_legacy(path, &legacy, adrs)?, &legacy);
         return Ok(Some(format!(
             "Status: superseded-pending {}",
@@ -246,6 +255,7 @@ fn replacement(path: &str, line: &str, adrs: &[String]) -> Result<Option<String>
         if !english_superseded_has_only_references(raw) {
             return Err("注記を保全して変換できません".to_owned());
         }
+        check_parts(raw)?;
         let changes = with_note(revisions::resolve_legacy(path, raw, adrs)?, raw);
         return Ok(Some(format!(
             "Status: superseded {}",

@@ -1,6 +1,6 @@
 # ADR 0028: 旧形式の部分名から修飾子と区切りの記号を除き、決められない部分名を移行しない
 
-Status: accepted-pending
+Status: accepted
 
 ## 文脈
 
