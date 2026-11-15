@@ -206,60 +206,75 @@ fn replacement(path: &str, line: &str, adrs: &[String]) -> Result<Option<String>
     ))
 }
 
-fn plan(root: &Path, adrs: &[String]) -> Result<Vec<Rewrite>, String> {
-    let mut rewrites = Vec::new();
-    for path in adrs {
-        let original = fs::read(root.join(path)).map_err(|error| format!("{path}: {error}"))?;
-        let content = std::str::from_utf8(&original)
-            .map_err(|error| format!("{path}: UTF-8で読めません: {error}"))?;
-        let lines = status::status_lines(content);
-        if lines.len() != 1 {
-            return Err(format!(
-                "{path}: ステータス行は1件必要です（{}件）",
-                lines.len()
-            ));
-        }
-        let line_number = lines[0].0;
-        let mut replacement_line = None;
-        let mut new_content = Vec::with_capacity(original.len());
-        for (index, line) in content.split_inclusive('\n').enumerate() {
-            if index + 1 == line_number {
-                let ending = if line.ends_with("\r\n") {
-                    "\r\n"
-                } else if line.ends_with('\n') {
-                    "\n"
-                } else {
-                    ""
-                };
-                let bare = line.trim_end_matches('\n').trim_end_matches('\r');
-                let changed = replacement(path, bare, adrs)
-                    .map_err(|error| format!("{path}:{}: {error}", index + 1))?;
-                if let Some(new_line) = changed {
-                    new_content.extend_from_slice(new_line.as_bytes());
-                    new_content.extend_from_slice(ending.as_bytes());
-                    replacement_line = Some((bare.to_owned(), new_line));
-                } else {
-                    new_content.extend_from_slice(line.as_bytes());
-                }
+/// ADRごとの移行の結果（ADR 0024）。
+enum Outcome {
+    /// 移行できる。
+    Migrate(Rewrite),
+    /// 移行済み。
+    Migrated,
+    /// 移行できない。理由を表示する文。
+    Fail(String),
+}
+
+fn plan_one(root: &Path, path: &str, adrs: &[String]) -> Result<Option<Rewrite>, String> {
+    let original = fs::read(root.join(path)).map_err(|error| format!("{path}: {error}"))?;
+    let content = std::str::from_utf8(&original)
+        .map_err(|error| format!("{path}: UTF-8で読めません: {error}"))?;
+    let lines = status::status_lines(content);
+    if lines.len() != 1 {
+        return Err(format!(
+            "{path}: ステータス行は1件必要です（{}件）",
+            lines.len()
+        ));
+    }
+    let line_number = lines[0].0;
+    let mut replacement_line = None;
+    let mut new_content = Vec::with_capacity(original.len());
+    for (index, line) in content.split_inclusive('\n').enumerate() {
+        if index + 1 == line_number {
+            let ending = if line.ends_with("\r\n") {
+                "\r\n"
+            } else if line.ends_with('\n') {
+                "\n"
+            } else {
+                ""
+            };
+            let bare = line.trim_end_matches('\n').trim_end_matches('\r');
+            let changed = replacement(path, bare, adrs)
+                .map_err(|error| format!("{path}:{}: {error}", index + 1))?;
+            if let Some(new_line) = changed {
+                new_content.extend_from_slice(new_line.as_bytes());
+                new_content.extend_from_slice(ending.as_bytes());
+                replacement_line = Some((bare.to_owned(), new_line));
             } else {
                 new_content.extend_from_slice(line.as_bytes());
             }
-        }
-        if let Some((before, after)) = replacement_line {
-            rewrites.push(Rewrite {
-                path: path.clone(),
-                line: line_number,
-                before,
-                after,
-                original,
-                content: new_content,
-            });
+        } else {
+            new_content.extend_from_slice(line.as_bytes());
         }
     }
-    Ok(rewrites)
+    Ok(replacement_line.map(|(before, after)| Rewrite {
+        path: path.to_owned(),
+        line: line_number,
+        before,
+        after,
+        original,
+        content: new_content,
+    }))
 }
 
-fn preview(rewrites: &[Rewrite]) {
+/// すべてのADRを調べる。移行できないADRがあっても止まらない（ADR 0024）。
+fn plan(root: &Path, adrs: &[String]) -> Vec<Outcome> {
+    adrs.iter()
+        .map(|path| match plan_one(root, path, adrs) {
+            Ok(Some(rewrite)) => Outcome::Migrate(rewrite),
+            Ok(None) => Outcome::Migrated,
+            Err(reason) => Outcome::Fail(reason),
+        })
+        .collect()
+}
+
+fn preview(rewrites: &[&Rewrite]) {
     for rewrite in rewrites {
         println!("--- a/{}", rewrite.path);
         println!("+++ b/{}", rewrite.path);
@@ -289,11 +304,14 @@ fn write_rewrite(root: &Path, rewrite: &Rewrite) -> Result<(), String> {
     Ok(())
 }
 
-fn run() -> Result<(), String> {
+const USAGE: &str = "使い方: migrate-adr-status --dry-run|--write";
+
+/// 終了コードを返す。ADRに結びつかない誤りは Err。
+fn run() -> Result<ExitCode, String> {
     let write = match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
-        [] => false,
+        [arg] if arg == "--dry-run" => false,
         [arg] if arg == "--write" => true,
-        _ => return Err("使い方: migrate-adr-status [--write]".to_owned()),
+        _ => return Err(USAGE.to_owned()),
     };
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
     let top = git(&cwd, &["rev-parse", "--show-toplevel"])?;
@@ -302,20 +320,50 @@ fn run() -> Result<(), String> {
         return Err("リポジトリのルートで実行してください".to_owned());
     }
     let adrs = files(&root)?;
-    let rewrites = plan(&root, &adrs)?;
-    if write {
-        for rewrite in &rewrites {
-            write_rewrite(&root, rewrite)?;
-        }
-    } else {
+    let outcomes = plan(&root, &adrs);
+    let rewrites: Vec<&Rewrite> = outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            Outcome::Migrate(rewrite) => Some(rewrite),
+            _ => None,
+        })
+        .collect();
+    let failures: Vec<&str> = outcomes
+        .iter()
+        .filter_map(|outcome| match outcome {
+            Outcome::Fail(reason) => Some(reason.as_str()),
+            _ => None,
+        })
+        .collect();
+    let migrated = outcomes
+        .iter()
+        .filter(|outcome| matches!(outcome, Outcome::Migrated))
+        .count();
+
+    if !write {
         preview(&rewrites);
     }
-    Ok(())
+    failures.iter().for_each(|reason| eprintln!("{reason}"));
+    eprintln!(
+        "移行できる: {}件、移行済み: {}件、移行できない: {}件",
+        rewrites.len(),
+        migrated,
+        failures.len()
+    );
+    if !failures.is_empty() {
+        return Ok(ExitCode::FAILURE);
+    }
+    if write {
+        rewrites
+            .iter()
+            .try_for_each(|rewrite| write_rewrite(&root, rewrite))?;
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn main() -> ExitCode {
     match run() {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(error) => {
             eprintln!("{error}");
             ExitCode::FAILURE
