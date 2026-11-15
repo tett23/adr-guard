@@ -293,3 +293,85 @@ fn legacy_inv4_pre_commit() {
     let output = git(p, &["commit", "-qm", "migrate"]);
     assert!(output.status.success(), "{}", text(&output.stderr));
 }
+
+// ADR 0027: 旧形式の `置換（…）`。
+
+#[test]
+fn replaced_inv4_pre_commit() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = repo();
+    let p = dir.path();
+    let path = "docs/adr/0009-i.md";
+    write(p, path, "ステータス: 置換（[ADR 0002](0002-b.md)）");
+    assert!(git(p, &["add", "."]).status.success());
+    assert!(
+        git(p, &["commit", "-q", "--no-verify", "-m", "legacy"])
+            .status
+            .success()
+    );
+    let hook = p.join(".git/hooks/pre-commit");
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\nexec '{BIN}' pre-commit --allow-status\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write(
+        p,
+        path,
+        r#"Status: superseded [{"part":null,"by":["docs/adr/0002-b.md"]}]"#,
+    );
+    assert!(git(p, &["add", "."]).status.success());
+    let output = git(p, &["commit", "-qm", "migrate"]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let range = Command::new(BIN)
+        .args(["check-range", "--allow-status", "HEAD~1", "HEAD"])
+        .current_dir(p)
+        .output()
+        .unwrap();
+    assert!(range.status.success(), "{}", text(&range.stderr));
+
+    // 移行スクリプトでも移り、二度目は差分がない
+    let dir = repo();
+    let p = dir.path();
+    write(p, path, "ステータス: 置換（[ADR 0002](0002-b.md)）");
+    let migrate = |mode: &str| {
+        Command::new(SCRIPT)
+            .arg(mode)
+            .current_dir(p)
+            .output()
+            .unwrap()
+    };
+    let written = migrate("--write");
+    assert!(written.status.success(), "{}", text(&written.stderr));
+    let content = std::fs::read_to_string(p.join(path)).unwrap();
+    assert!(
+        content.contains(r#"Status: superseded [{"by":["docs/adr/0002-b.md"],"part":null}]"#),
+        "{content}"
+    );
+    let again = migrate("--dry-run");
+    assert!(again.status.success(), "{}", text(&again.stderr));
+    assert!(again.stdout.is_empty());
+}
+
+#[test]
+fn replaced_inv5_migrate_note() {
+    let dir = repo();
+    let p = dir.path();
+    let path = "docs/adr/0009-i.md";
+    write(p, path, "ステータス: 置換（[ADR 0002](0002-b.md)）で削った");
+    let written = Command::new(SCRIPT)
+        .arg("--write")
+        .current_dir(p)
+        .output()
+        .unwrap();
+    assert!(written.status.success(), "{}", text(&written.stderr));
+    let content = std::fs::read_to_string(p.join(path)).unwrap();
+    let line = content.lines().find(|l| l.starts_with("Status: ")).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(line.strip_prefix("Status: superseded ").unwrap()).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([{"part":null,"by":["docs/adr/0002-b.md"],"note":"で削った"}])
+    );
+}
