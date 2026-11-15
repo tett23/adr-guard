@@ -8,6 +8,8 @@ struct Reference {
     number: String,
     qualifier: Option<String>,
     destination: Option<String>,
+    /// リンクの文字の番号がリンク先の番号と合わない（ADR 0026）
+    mismatched: bool,
 }
 
 fn normalize_relative(doc: &str, destination: &str) -> Result<String, String> {
@@ -91,6 +93,12 @@ fn resolve_reference(doc: &str, reference: &Reference, adrs: &[String]) -> Resul
         return Ok(url.to_owned());
     }
     let number = &reference.number;
+    if reference.mismatched {
+        let destination = reference.destination.as_deref().unwrap_or_default();
+        return Err(format!(
+            "ADR {number} のリンク先 {destination} の番号が違います"
+        ));
+    }
     let linked = reference
         .destination
         .as_deref()
@@ -159,19 +167,14 @@ fn qualifier_before(text: &str, at: usize) -> Option<String> {
 }
 
 fn references(raw: &str) -> Vec<Reference> {
-    let (text, links) = links::status_text_and_links(raw);
-    let refs: Vec<Reference> = links::status_reference_numbers(&text)
+    let (text, legacy) = status::legacy_refs(raw);
+    let refs: Vec<Reference> = legacy
         .into_iter()
-        .map(|(at, number, first)| {
-            let destination = links
-                .iter()
-                .find(|(range, _)| range.contains(&at))
-                .map(|(_, target)| target.clone());
-            Reference {
-                number: number.to_owned(),
-                qualifier: first.then(|| qualifier_before(&text, at - 4)).flatten(),
-                destination,
-            }
+        .map(|reference| Reference {
+            number: reference.number,
+            qualifier: reference.adr_at.and_then(|at| qualifier_before(&text, at)),
+            destination: reference.destination,
+            mismatched: reference.mismatched,
         })
         .collect();
     if !refs.is_empty() {
@@ -186,6 +189,7 @@ fn references(raw: &str) -> Vec<Reference> {
                 number: number.to_owned(),
                 qualifier: None,
                 destination: None,
+                mismatched: false,
             })
         })
         .collect();

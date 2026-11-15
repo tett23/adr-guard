@@ -1,6 +1,6 @@
 # ADR 0026: 旧形式のステータス行の修正先を、リンク先と裸の番号からも読む
 
-Status: accepted-pending
+Status: accepted
 
 ## 文脈
 
