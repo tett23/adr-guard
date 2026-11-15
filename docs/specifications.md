@@ -25,6 +25,7 @@
     - 最後の参照の後ろは、空か閉じ括弧だけなら捨て、前後の括弧を除いて `は` で終われば修正先の抜け（`修正先の番号がありません`）とし、それ以外は注記とする。注記は旧形式と新形式の比較に使わず、移行スクリプトが最後の変更の `note` に入れる。
   - `採択` の直後に開き括弧（`（` か `(`）、`未実装`、閉じ括弧（`）` か `)`）が続くもの、`Accepted (not implemented)`（`Accepted` の後の半角の空白は1つあってもなくてもよく、括弧の揺れも同じ）：AcceptedNotImplemented（[ADR 0016](adr/0016-accepted-not-implemented-status.md)）。Superseded と Accepted より先に判定する。
   - `採択…`、`Accepted`：Accepted
+  - `置換…`：Superseded。`置換` の後ろの前後の空白、先頭の `→`、先頭の開き括弧とそれに対応する閉じ括弧を除いてから、`採択→` の後ろと同じ規則で変更を読む（[ADR 0027](adr/0027-read-legacy-replaced-status.md)）
   - `却下…`、`Rejected`：Rejected
   - `破棄…`、`Discarded`：Discarded
   - `廃止…`、`Deprecated`：Deprecated

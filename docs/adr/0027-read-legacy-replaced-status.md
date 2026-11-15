@@ -1,6 +1,6 @@
 # ADR 0027: 旧形式の `置換（…）` を、修正を受けた状態として読む
 
-Status: accepted-pending
+Status: accepted
 
 ## 文脈
 

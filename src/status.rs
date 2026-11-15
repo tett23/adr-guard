@@ -412,6 +412,8 @@ pub fn parse(raw: &str) -> Status {
         Status::Superseded(changes_ja(rest))
     } else if raw.starts_with("採択") {
         Status::Accepted
+    } else if let Some(rest) = raw.strip_prefix("置換") {
+        Status::Superseded(changes_ja(&replaced_body(rest)))
     } else if raw.starts_with("却下") {
         Status::Rejected
     } else if raw.starts_with("破棄") {
@@ -797,6 +799,31 @@ fn ja_changes(rest: &str) -> (Vec<Change>, Option<String>) {
     }
 }
 
+/// `置換` より後ろを、`採択→` より後ろと同じ形にする（ADR 0027）。
+/// 前後の空白と先頭の `→` を除き、先頭の開き括弧と、それに対応する閉じ括弧を除く。
+fn replaced_body(rest: &str) -> String {
+    let rest = rest.trim();
+    let rest = rest.strip_prefix('→').map_or(rest, str::trim_start);
+    let Some(inner) = rest.strip_prefix(['（', '(']) else {
+        return rest.to_owned();
+    };
+    let close = inner
+        .char_indices()
+        .scan(1i32, |depth, (at, c)| {
+            *depth += match c {
+                '（' | '(' => 1,
+                '）' | ')' => -1,
+                _ => 0,
+            };
+            Some((at, c, *depth))
+        })
+        .find(|&(_, _, depth)| depth == 0);
+    match close {
+        Some((at, c, _)) => format!("{}{}", &inner[..at], &inner[at + c.len_utf8()..]),
+        None => rest.to_owned(),
+    }
+}
+
 /// `採択→` より後ろから変更を取り出す。
 fn changes_ja(rest: &str) -> Vec<Change> {
     ja_changes(rest).0
@@ -805,7 +832,13 @@ fn changes_ja(rest: &str) -> Vec<Change> {
 /// 旧形式の `採択→…` の行の、最後の参照の後ろの注記（ADR 0026。移行スクリプトが使う）。
 #[allow(dead_code)]
 pub fn legacy_note(raw: &str) -> Option<String> {
-    superseded_ja(raw).and_then(|rest| ja_changes(rest).1)
+    match superseded_ja(raw) {
+        Some(rest) => ja_changes(rest).1,
+        // `置換…`（ADR 0027）
+        None => raw
+            .strip_prefix("置換")
+            .and_then(|rest| ja_changes(&replaced_body(rest)).1),
+    }
 }
 
 /// `Superseded` より後ろから変更を取り出す。
@@ -825,6 +858,67 @@ fn changes_en(rest: &str) -> Vec<Change> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ADR 0027
+
+    #[test]
+    fn replaced_inv1_status() {
+        for raw in [
+            "置換（[ADR 0002](0002-b.md)）",
+            "置換([ADR 0002](0002-b.md))",
+            "置換（[ADR 0002](0002-b.md)、[ADR 0003](0003-c.md)）",
+            "置換→[ADR 0002](0002-b.md)",
+            "置換",
+            "置換（[ADR 0002](0002-b.md)）で削った",
+        ] {
+            assert!(matches!(parse(raw), Status::Superseded(_)), "{raw}");
+        }
+        assert_eq!(
+            parse("採択（X は置換（[ADR 0002](0002-b.md)））"),
+            Status::Accepted
+        );
+    }
+
+    #[test]
+    fn replaced_inv2_changes() {
+        let pairs = [
+            (
+                "置換（[ADR 0002](0002-b.md)）",
+                "採択→[ADR 0002](0002-b.md)",
+            ),
+            ("置換([ADR 0002](0002-b.md))", "採択→[ADR 0002](0002-b.md)"),
+            (
+                "置換（[ADR 0002](0002-b.md)、[ADR 0003](0003-c.md)）",
+                "採択→[ADR 0002](0002-b.md)、[ADR 0003](0003-c.md)",
+            ),
+            ("置換→[ADR 0002](0002-b.md)", "採択→[ADR 0002](0002-b.md)"),
+        ];
+        for (replaced, accepted) in pairs {
+            assert_eq!(parse(replaced), parse(accepted), "{replaced}");
+        }
+        assert_eq!(parse("置換"), Status::Superseded(vec![]));
+        assert_eq!(
+            legacy_note("置換（[ADR 0002](0002-b.md)）で削った"),
+            Some("で削った".to_owned())
+        );
+    }
+
+    #[test]
+    fn replaced_inv3_others() {
+        let cases = [
+            ("提案", Status::Proposed),
+            ("採択", Status::Accepted),
+            ("採択（未実装）", Status::AcceptedNotImplemented),
+            ("却下", Status::Rejected),
+            ("破棄", Status::Discarded),
+            ("廃止", Status::Deprecated),
+            ("補足（[ADR 0002](0002-b.md)）", Status::Unknown),
+            ("Replaced by ADR 0002", Status::Unknown),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(parse(raw), expected, "{raw}");
+        }
+    }
 
     // ADR 0025
 
