@@ -15,8 +15,8 @@
 - `docs/a/b/adr/` のような2段以上のモジュールと、`packages/server/adr/` のように `docs` を挟まない場所は対象外。
 - ステータスの行は、行頭が `ステータス:` か `Status:`（見出しの大文字・小文字は区別し、コロンは半角）の行とする（[ADR 0012](adr/0012-status-line-and-status-adt.md)）。`- Status:`、`* Status:`、`status:`、全角のコロン、行頭の空白は認めない。
 - ADRはステータスの行をちょうど1つ持つ。ステータスの行が無いADRは `<パス>: ステータスの行がありません（ステータス: または Status: で始まる行が要ります）`、2つ以上あるADRは2つ目以降の行ごとに `<パス>:<行>: ステータスの行が2つ以上あります（最初は<行>行目）` を違反とする。`pre-commit`（初回を含むステージされた追加・変更のADR）と `check-status` で検査する。`ADR_GUARD_ALLOW` はこの違反を許可しない。
-- 新規ADRは `Status: proposed` で一度コミットする。採択して実装を待つ場合は `accepted-pending`、採択または実装完了は `accepted`、却下は `rejected`、取り下げは `discarded`、廃止は `deprecated` を使う。修正時は `Status: superseded [{"part":null,"by":["docs/adr/0002-example.md"]}]` のように部分名と修正先パスを書く。初回コミットを含め、pre-commit と check-range は状態遷移を検査する。違反は書き換えの許可オプションやトレーラーでも終了コード1になる（[ADR 0022](adr/0022-status-transitions.md)）。
-- 旧形式はそのまま読み取れる。ステータス行を書き換える際は新形式を使う。移行するには対象リポジトリのルートで adr-guard のソースにある `scripts/migrate-adr-status --dry-run` を実行して差分を確認し、`scripts/migrate-adr-status --write` で適用する。引数なしは使い方の誤りになる。どちらのモードも全ADRを調べ、移行できないADRを1件ずつ表示し、最後に `移行できる: N件、移行済み: K件、移行できない: M件` を標準エラーに表示する。移行できないADRが1件でもあれば終了コード1で終わり、`--write` でも何も書き込まない（[ADR 0024](adr/0024-migration-dry-run-and-error-count.md)）。
+- 新規ADRは `Status: proposed` で一度コミットする。採択して実装を待つ場合は `accepted-pending`、採択または実装完了は `accepted`、却下は `rejected`、取り下げは `discarded`、廃止は `deprecated` を使う。修正時は `Status: superseded [{"part":null,"by":["docs/adr/0002-example.md"]}]` のように部分名と修正先パスを書く。 実装を待つADRが修正を受けたときは `superseded-pending` を使う。変更には、種類 `kind`（`replace`（既定）、`supplement`（補足）、`note`（修正先のない注記））と注記 `note` を付けられる。修正先には、リポジトリのルートからのパスのほか、別のリポジトリなどの `https://` の URL を書ける。URL は存在を確かめず、たどらない（[ADR 0025](adr/0025-extend-canonical-status-amendments.md)）。初回コミットを含め、pre-commit と check-range は状態遷移を検査する。違反は書き換えの許可オプションやトレーラーでも終了コード1になる（[ADR 0022](adr/0022-status-transitions.md)）。
+- 旧形式はそのまま読み取れる。ステータス行を書き換える際は新形式を使う。移行するには対象リポジトリのルートで adr-guard のソースにある `scripts/migrate-adr-status --dry-run` を実行して差分を確認し、`scripts/migrate-adr-status --write` で適用する。引数なしは使い方の誤りになる。どちらのモードも全ADRを調べ、移行できないADRを1件ずつ表示し、最後に `移行できる: N件、移行済み: K件、移行できない: M件` を標準エラーに表示する。移行できないADRが1件でもあれば終了コード1で終わり、`--write` でも何も書き込まない（[ADR 0024](adr/0024-migration-dry-run-and-error-count.md)）。スクリプトは `採択（未実装）→…` を `superseded-pending` に、URL のリンク先を URL の修正先に移す。補足と注記は移さないので、手で新形式に書く（[ADR 0025](adr/0025-extend-canonical-status-amendments.md)）。
 - 旧形式のステータスの値（コロンより後ろの、前後の空白を除いた元の値）は、次の状態として解釈する。日本語は先頭の一致、英語は大文字と小文字を区別せずキーワードの直後が英数字でないときに当たる。どれにも当たらない値は `Unknown` とし、違反にはしない。
   - `提案…`、`Proposed`：Proposed
   - `採択` に0個以上の空白と `→` が続くもの、`Superseded…`：Superseded（後ろの「変わった部分」と変更したADRの番号を解析する。分類には影響しない）
@@ -91,8 +91,9 @@
   - 違反したコミットとファイルをすべて表示し、1件でもあれば終了コード1で終わる。
 - `adr-guard trace [--list|--graph] <path>`（[ADR 0023](adr/0023-trace-amendments.md)）
   - 作業ツリー内の起点からステータス行の修正先を記載順に深さ優先でたどる。パス引数は絶対または呼び出し元からの相対パスで指定し、出力のパスはリポジトリルートからの相対パスとする。
-  - 既定の `--list` はヘッダーなしの4列TSVで種別、元のパス、修正先のパス、部分名を出す。起点は `root` で第三列にそのパスを置き、修正先ごとに `edge` を出す。合流先の子は一度だけ展開する。
-  - `--graph` は枝線で親子関係を描き、合流先に `[表示済み]` を付ける。両形式でフィールド内のバックスラッシュ、タブ、CR、LF はエスケープする。
+  - 既定の `--list` はヘッダーなしの6列TSVで種別、元のパス、修正先のパス、部分名、変更の種類（`replace`、`supplement`、`note`）、注記を出す。起点は `root` で第三列にそのパスを置き、第五列と第六列を空にする。修正先ごとに `edge` を出し、注記の種類の変更は第三列を空にした `edge` を1行出す。合流先の子は一度だけ展開する（[ADR 0025](adr/0025-extend-canonical-status-amendments.md)）。
+  - `superseded` と `superseded-pending` のADRの修正先を展開する。URL の修正先は葉とし、展開しない。
+  - `--graph` は枝線で親子関係を描き、合流先に `[表示済み]` を付ける。補足には ` (補足)`、置換の注記には ` (<注記>)` を付け、注記の種類は `<部分名>: <注記>` と表示する。両形式でフィールド内のバックスラッシュ、タブ、CR、LF はエスケープする。
   - 正常時は終了コード0とする。到達範囲の循環、参照先の欠落や曖昧さ、読み込みや構文のエラーは標準エラーに出し、標準出力を空にして1で終わる。オプションの併用や引数の過不足は64で終わる。
 - `adr-guard list [--status]`（[ADR 0005](adr/0005-list-and-proposed-subcommands.md)、[0007](adr/0007-list-status-option.md)）
   - 作業ツリーにあるすべてのADRのパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
@@ -106,9 +107,9 @@
   - `--fix` では、コミット済みのADR（ADRのパスにあって `HEAD` に存在するもの）を除いて、参照をリンクに置きかえ、修飾子の付いたリンクを直す。直せない誤り（修飾子の参照先が無いもの）は報告し、終了コード1で終わる。コミット済みのADRに参照が残れば終了コード1で終わる。
   - `--include-committed`（`--fix` と一緒にだけ使える）では、コミット済みのADRも書きかえる。
 - `adr-guard check-status`（[ADR 0012](adr/0012-status-line-and-status-adt.md)）
-  - 作業ツリーのすべてのADR（`.md`）のステータス行がちょうど1つあるか、予約した `Status: superseded [` で始まる行が新形式の構文に従うかを検査し、違反を `check-status: ` に続けて標準エラーに表示する。違反があれば終了コード1、無ければ終了コード0で終わる。
+  - 作業ツリーのすべてのADR（`.md`）のステータス行がちょうど1つあるか、予約した `Status: superseded [` と `Status: superseded-pending [` で始まる行が新形式の構文に従うかを検査し、違反を `check-status: ` に続けて標準エラーに表示する。違反があれば終了コード1、無ければ終了コード0で終わる。
 - `adr-guard unimplemented [--status]`（[ADR 0016](adr/0016-accepted-not-implemented-status.md)）
-  - ステータスの行がちょうど1つあり、その状態が AcceptedNotImplemented のADRのパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
+  - ステータスの行がちょうど1つあり、その状態が AcceptedNotImplemented か SupersededPending（[ADR 0025](adr/0025-extend-canonical-status-amendments.md)）のADRのパスを、1行に1つずつ標準出力に出力し、終了コード0で終わる。
   - `--status` では、`<ステータス><タブ><パス>` の形で出力する。ステータスは元の値のまま。
 - `adr-guard check-numbers`（[ADR 0018](adr/0018-repair-duplicate-adr-numbers.md)）
   - 作業ツリーの各ADRのディレクトリの直下にある、ファイル名が `<4桁の数字>-` で始まる `.md` のADRについて、同じディレクトリで同じ番号のものが2つ以上あれば重複とする。別のディレクトリの同じ番号は重複としない。

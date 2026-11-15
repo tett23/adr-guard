@@ -175,6 +175,42 @@ fn english_superseded_has_only_references(raw: &str) -> bool {
     references > 0
 }
 
+fn changes_json(changes: Vec<status::Change>) -> Result<String, String> {
+    let values: Vec<_> = changes
+        .into_iter()
+        .map(|change| serde_json::json!({"part": change.part, "by": change.by}))
+        .collect();
+    serde_json::to_string(&values).map_err(|error| error.to_string())
+}
+
+/// `採択（未実装）→…` と `Accepted (not implemented) →…` の `→` より後ろ（ADR 0025）。
+fn pending_revisions(raw: &str) -> Option<&str> {
+    let bracket = |rest: &str, inner: &str| -> Option<usize> {
+        let open = ['（', '('].into_iter().find(|c| rest.starts_with(*c))?;
+        let body = &rest[open.len_utf8()..];
+        let head = body.get(..inner.len())?;
+        if !head.eq_ignore_ascii_case(inner) {
+            return None;
+        }
+        let close = ['）', ')']
+            .into_iter()
+            .find(|c| body[inner.len()..].starts_with(*c))?;
+        Some(open.len_utf8() + inner.len() + close.len_utf8())
+    };
+    let after = if let Some(rest) = raw.strip_prefix("採択") {
+        &rest[bracket(rest, "未実装")?..]
+    } else {
+        let rest = raw
+            .get(..8)
+            .filter(|head| head.eq_ignore_ascii_case("accepted"))?;
+        let rest = raw[rest.len()..]
+            .strip_prefix(' ')
+            .unwrap_or(&raw[rest.len()..]);
+        &rest[bracket(rest, "not implemented")?..]
+    };
+    after.trim_start().strip_prefix('→')
+}
+
 fn replacement(path: &str, line: &str, adrs: &[String]) -> Result<Option<String>, String> {
     if line.starts_with("Status: ") && status::parse_canonical_line(line).is_ok() {
         return Ok(None);
@@ -187,18 +223,21 @@ fn replacement(path: &str, line: &str, adrs: &[String]) -> Result<Option<String>
     if let Some(value) = simple(raw) {
         return Ok(Some(format!("Status: {value}")));
     }
+    if let Some(rest) = pending_revisions(raw) {
+        let changes = revisions::resolve_legacy(path, &format!("採択→{rest}"), adrs)?;
+        return Ok(Some(format!(
+            "Status: superseded-pending {}",
+            changes_json(changes)?
+        )));
+    }
     if matches!(status::parse(raw), status::Status::Superseded(_)) {
         if !english_superseded_has_only_references(raw) {
             return Err("注記を保全して変換できません".to_owned());
         }
         let changes = revisions::resolve_legacy(path, raw, adrs)?;
-        let values: Vec<_> = changes
-            .into_iter()
-            .map(|change| serde_json::json!({"part": change.part, "by": change.by}))
-            .collect();
         return Ok(Some(format!(
             "Status: superseded {}",
-            serde_json::to_string(&values).map_err(|error| error.to_string())?
+            changes_json(changes)?
         )));
     }
     Err(format!(

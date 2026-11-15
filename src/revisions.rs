@@ -82,6 +82,14 @@ fn qualifier_dir(doc: &str, qualifier: &str, adrs: &[String]) -> Option<String> 
 }
 
 fn resolve_reference(doc: &str, reference: &Reference, adrs: &[String]) -> Result<String, String> {
+    // 別のリポジトリなどへの URL は、そのまま修正先とする（ADR 0025）
+    if let Some(url) = reference
+        .destination
+        .as_deref()
+        .filter(|dest| dest.starts_with("https://"))
+    {
+        return Ok(url.to_owned());
+    }
     let number = &reference.number;
     let linked = reference
         .destination
@@ -212,10 +220,7 @@ pub fn resolve_legacy(doc: &str, raw: &str, adrs: &[String]) -> Result<Vec<Chang
                     resolve_reference(doc, &reference, adrs)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Change {
-                part: change.part,
-                by,
-            })
+            Ok(Change::legacy(change.part, by))
         })
         .collect()
 }

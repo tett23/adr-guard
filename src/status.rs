@@ -33,6 +33,8 @@ pub enum Status {
     AcceptedNotImplemented,
     /// `採択→…`、`Superseded by …`。一部または全部が後のADRで変更された
     Superseded(Vec<Change>),
+    /// `superseded-pending [...]`。採択して実装を待つまま、後のADRの変更を受けた（ADR 0025）
+    SupersededPending(Vec<Change>),
     /// `却下…`、`Rejected`
     Rejected,
     /// `破棄…`、`Discarded`。採択されずに取りやめた
@@ -49,8 +51,62 @@ pub enum Status {
 pub struct Change {
     /// 変わった部分。全体が変わった場合や書かれていない場合はNone
     pub part: Option<String>,
-    /// 変更したADRの番号（4桁の数字）
+    /// 変更したADRの番号（4桁の数字）か、修正先（ルートからのパスか `https://` の URL。ADR 0025）
     pub by: Vec<String>,
+    /// 変更の種類（ADR 0025）
+    pub kind: Kind,
+    /// 注記（ADR 0025）
+    pub note: Option<String>,
+}
+
+/// 変更の種類（ADR 0025）。省いたときは置換。
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Kind {
+    #[default]
+    Replace,
+    Supplement,
+    Note,
+}
+
+impl Kind {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Replace => "replace",
+            Self::Supplement => "supplement",
+            Self::Note => "note",
+        }
+    }
+}
+
+/// 修正先（ADR 0025）。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Target<'a> {
+    /// リポジトリのルートからの相対パス
+    Path(&'a str),
+    /// `https://` で始まる、別のリポジトリなどの URL。たどらない
+    Url(&'a str),
+}
+
+impl<'a> Target<'a> {
+    pub fn of(by: &'a str) -> Self {
+        if by.starts_with("https://") {
+            Self::Url(by)
+        } else {
+            Self::Path(by)
+        }
+    }
+}
+
+impl Change {
+    /// 旧形式から読んだ変更（種類は置換、注記なし）。
+    pub fn legacy(part: Option<String>, by: Vec<String>) -> Self {
+        Self {
+            part,
+            by,
+            kind: Kind::Replace,
+            note: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,9 +127,19 @@ pub enum Transition {
         origin: ReviseOrigin,
         changes: Vec<Change>,
     },
+    /// Pending から SupersededPending（ADR 0025）
+    RevisePending {
+        changes: Vec<Change>,
+    },
+    /// `pending` なら SupersededPending どうし（ADR 0025）
     UpdateRevisions {
         old: Vec<Change>,
         new: Vec<Change>,
+        pending: bool,
+    },
+    /// SupersededPending から同じ変更の Superseded（ADR 0025）
+    CompleteRevised {
+        changes: Vec<Change>,
     },
     Deprecate {
         origin: DeprecateOrigin,
@@ -91,6 +157,7 @@ pub enum DeprecateOrigin {
     Accepted,
     Pending,
     Superseded(Vec<Change>),
+    SupersededPending(Vec<Change>),
 }
 
 impl Transition {
@@ -98,7 +165,8 @@ impl Transition {
     pub fn endpoints(self) -> (AdrState, AdrState) {
         use AdrState::{Absent, Present};
         use Status::{
-            Accepted, AcceptedNotImplemented, Deprecated, Discarded, Proposed, Rejected, Superseded,
+            Accepted, AcceptedNotImplemented, Deprecated, Discarded, Proposed, Rejected,
+            Superseded, SupersededPending,
         };
         match self {
             Self::Propose => (Absent, Present(Proposed)),
@@ -114,14 +182,33 @@ impl Transition {
                 }),
                 Present(Superseded(changes)),
             ),
-            Self::UpdateRevisions { old, new } => {
-                (Present(Superseded(old)), Present(Superseded(new)))
-            }
+            Self::RevisePending { changes } => (
+                Present(AcceptedNotImplemented),
+                Present(SupersededPending(changes)),
+            ),
+            Self::UpdateRevisions {
+                old,
+                new,
+                pending: false,
+            } => (Present(Superseded(old)), Present(Superseded(new))),
+            Self::UpdateRevisions {
+                old,
+                new,
+                pending: true,
+            } => (
+                Present(SupersededPending(old)),
+                Present(SupersededPending(new)),
+            ),
+            Self::CompleteRevised { changes } => (
+                Present(SupersededPending(changes.clone())),
+                Present(Superseded(changes)),
+            ),
             Self::Deprecate { origin } => (
                 Present(match origin {
                     DeprecateOrigin::Accepted => Accepted,
                     DeprecateOrigin::Pending => AcceptedNotImplemented,
                     DeprecateOrigin::Superseded(changes) => Superseded(changes),
+                    DeprecateOrigin::SupersededPending(changes) => SupersededPending(changes),
                 }),
                 Present(Deprecated),
             ),
@@ -141,7 +228,7 @@ pub fn classify(before: AdrState, after: AdrState) -> Classification {
     use Classification::{Direct, Unchanged, Unclassified};
     use Status::{
         Accepted, AcceptedNotImplemented, Deprecated, Discarded, Proposed, Rejected, Superseded,
-        Unknown,
+        SupersededPending, Unknown,
     };
     match (before, after) {
         (Present(Unknown), _) | (_, Present(Unknown)) => Unclassified,
@@ -164,7 +251,24 @@ pub fn classify(before: AdrState, after: AdrState) -> Classification {
             })
         }
         (Present(Superseded(old)), Present(Superseded(new))) => {
-            Direct(Transition::UpdateRevisions { old, new })
+            Direct(Transition::UpdateRevisions {
+                old,
+                new,
+                pending: false,
+            })
+        }
+        (Present(AcceptedNotImplemented), Present(SupersededPending(changes))) => {
+            Direct(Transition::RevisePending { changes })
+        }
+        (Present(SupersededPending(old)), Present(SupersededPending(new))) => {
+            Direct(Transition::UpdateRevisions {
+                old,
+                new,
+                pending: true,
+            })
+        }
+        (Present(SupersededPending(old)), Present(Superseded(new))) if old == new => {
+            Direct(Transition::CompleteRevised { changes: new })
         }
         (Present(Accepted), Present(Deprecated)) => Direct(Transition::Deprecate {
             origin: DeprecateOrigin::Accepted,
@@ -175,6 +279,11 @@ pub fn classify(before: AdrState, after: AdrState) -> Classification {
         (Present(Superseded(changes)), Present(Deprecated)) => Direct(Transition::Deprecate {
             origin: DeprecateOrigin::Superseded(changes),
         }),
+        (Present(SupersededPending(changes)), Present(Deprecated)) => {
+            Direct(Transition::Deprecate {
+                origin: DeprecateOrigin::SupersededPending(changes),
+            })
+        }
         _ => Unclassified,
     }
 }
@@ -228,7 +337,7 @@ pub fn count_violations(path: &str, content: &str) -> Vec<String> {
                 .nth(line - 1)
                 .unwrap_or_default()
                 .trim_end_matches('\r');
-            if original.starts_with("Status: superseded [") {
+            if is_reserved(original.strip_prefix("Status: ").unwrap_or_default()) {
                 parse_canonical_line(original)
                     .err()
                     .map(|reason| vec![format!("{path}:{line}: {reason}")])
@@ -293,7 +402,7 @@ fn accepted_not_implemented(raw: &str) -> bool {
 pub fn parse(raw: &str) -> Status {
     if let Some(status) = parse_canonical_value(raw) {
         status
-    } else if raw.starts_with("superseded [") {
+    } else if is_reserved(raw) {
         Status::Unknown
     } else if raw.starts_with("提案") {
         Status::Proposed
@@ -334,6 +443,11 @@ pub fn parse_canonical_line(line: &str) -> Result<Status, String> {
     parse_canonical_value(raw).ok_or_else(|| "新形式のステータス値が不正です".to_owned())
 }
 
+/// JSON の誤りを旧形式に読み替えない、新形式の予約した接頭辞（ADR 0022、0025）。
+pub fn is_reserved(raw: &str) -> bool {
+    raw.starts_with("superseded [") || raw.starts_with("superseded-pending [")
+}
+
 fn parse_canonical_value(raw: &str) -> Option<Status> {
     let simple = match raw {
         "proposed" => Some(Status::Proposed),
@@ -345,13 +459,20 @@ fn parse_canonical_value(raw: &str) -> Option<Status> {
         _ => None,
     };
     simple.or_else(|| {
-        let json = raw.strip_prefix("superseded ")?;
+        let (json, pending) = raw
+            .strip_prefix("superseded-pending ")
+            .map(|json| (json, true))
+            .or_else(|| raw.strip_prefix("superseded ").map(|json| (json, false)))?;
         if !json.starts_with('[') {
             return None;
         }
         let changes: Vec<CanonicalChange> = serde_json::from_str(json).ok()?;
-        (!changes.is_empty())
-            .then(|| Status::Superseded(changes.into_iter().map(|item| item.0).collect()))
+        let changes: Vec<Change> = changes.into_iter().map(|item| item.0).collect();
+        match (changes.is_empty(), pending) {
+            (true, _) => None,
+            (false, true) => Some(Status::SupersededPending(changes)),
+            (false, false) => Some(Status::Superseded(changes)),
+        }
     })
 }
 
@@ -365,39 +486,78 @@ impl<'de> Deserialize<'de> for CanonicalChange {
             type Value = CanonicalChange;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("part と by だけを持つ変更")
+                formatter.write_str("part、by、kind、note を持つ変更")
             }
 
             fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+                const FIELDS: &[&str] = &["part", "by", "kind", "note"];
                 let mut part: Option<Option<String>> = None;
                 let mut by: Option<Vec<String>> = None;
+                let mut kind: Option<String> = None;
+                let mut note: Option<String> = None;
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "part" if part.is_none() => part = Some(map.next_value()?),
                         "by" if by.is_none() => by = Some(map.next_value()?),
-                        "part" | "by" => return Err(de::Error::custom("重複したキー")),
-                        _ => return Err(de::Error::unknown_field(&key, &["part", "by"])),
+                        "kind" if kind.is_none() => kind = Some(map.next_value()?),
+                        "note" if note.is_none() => note = Some(map.next_value()?),
+                        "part" | "by" | "kind" | "note" => {
+                            return Err(de::Error::custom("重複したキー"));
+                        }
+                        _ => return Err(de::Error::unknown_field(&key, FIELDS)),
                     }
                 }
                 let part = part.ok_or_else(|| de::Error::missing_field("part"))?;
                 let by = by.ok_or_else(|| de::Error::missing_field("by"))?;
+                let kind = match kind.as_deref() {
+                    None | Some("replace") => Kind::Replace,
+                    Some("supplement") => Kind::Supplement,
+                    Some("note") => Kind::Note,
+                    Some(other) => {
+                        return Err(de::Error::unknown_variant(
+                            other,
+                            &["replace", "supplement", "note"],
+                        ));
+                    }
+                };
+                let valid_note = note
+                    .as_ref()
+                    .is_none_or(|note| !note.is_empty() && !note.contains(['\n', '\r']));
+                let valid_by = match kind {
+                    Kind::Note => by.is_empty() && note.is_some(),
+                    Kind::Replace | Kind::Supplement => !by.is_empty(),
+                };
                 if part.as_ref().is_some_and(String::is_empty)
-                    || by.is_empty()
-                    || by.iter().any(|path| {
-                        path.starts_with('/')
-                            || path.split('/').any(|segment| {
-                                segment.is_empty() || segment == "." || segment == ".."
-                            })
-                            || path.contains('\\')
-                    })
+                    || !valid_note
+                    || !valid_by
+                    || by.iter().any(|target| !valid_target(target))
                 {
-                    return Err(de::Error::custom("変更部分または修正先パスが不正です"));
+                    return Err(de::Error::custom("変更部分、修正先、種類、注記が不正です"));
                 }
-                Ok(CanonicalChange(Change { part, by }))
+                Ok(CanonicalChange(Change {
+                    part,
+                    by,
+                    kind,
+                    note,
+                }))
             }
         }
 
         deserializer.deserialize_map(ChangeVisitor)
+    }
+}
+
+/// 修正先が、ルートからの相対パスか `https://` の URL か（ADR 0022、0025）。
+fn valid_target(target: &str) -> bool {
+    match Target::of(target) {
+        Target::Url(url) => url.len() > "https://".len() && !url.contains(char::is_whitespace),
+        Target::Path(path) => {
+            !(path.starts_with('/')
+                || path
+                    .split('/')
+                    .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+                || path.contains('\\'))
+        }
     }
 }
 
@@ -484,20 +644,16 @@ fn changes_ja(rest: &str) -> Vec<Change> {
         return vec![];
     }
     if let Some(by) = bare_numbers(text) {
-        return vec![Change { part: None, by }];
+        return vec![Change::legacy(None, by)];
     }
     let found = sequences(text);
     let last_end = found.last().map_or(0, |sequence| sequence.end);
     let starts = std::iter::once(0).chain(found.iter().map(|sequence| sequence.end));
-    let changes = found.iter().zip(starts).map(|(sequence, from)| Change {
-        part: part(&text[from..sequence.start]),
-        by: sequence.numbers.clone(),
+    let changes = found.iter().zip(starts).map(|(sequence, from)| {
+        Change::legacy(part(&text[from..sequence.start]), sequence.numbers.clone())
     });
     let tail = text[last_end..].trim_matches(|c: char| c.is_whitespace() || c == '、');
-    let trailing = (!tail.is_empty()).then(|| Change {
-        part: Some(tail.to_owned()),
-        by: vec![],
-    });
+    let trailing = (!tail.is_empty()).then(|| Change::legacy(Some(tail.to_owned()), vec![]));
     changes.chain(trailing).collect()
 }
 
@@ -506,18 +662,121 @@ fn changes_en(rest: &str) -> Vec<Change> {
     let text = links::link_texts(rest);
     let text = text.trim_start();
     let text = english(text, "by").unwrap_or(text);
-    vec![Change {
-        part: None,
-        by: sequences(text)
+    vec![Change::legacy(
+        None,
+        sequences(text)
             .into_iter()
             .flat_map(|sequence| sequence.numbers)
             .collect(),
-    }]
+    )]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ADR 0025
+
+    fn canonical(line: &str) -> Status {
+        parse_canonical_line(line).unwrap_or_else(|error| panic!("{line}: {error}"))
+    }
+
+    #[test]
+    fn amend_inv1_key_order() {
+        let pairs = [
+            (
+                r#"Status: superseded-pending [{"part":null,"by":["docs/adr/0002-b.md"]}]"#,
+                r#"Status: superseded-pending [ { "by" : [ "docs/adr/0002-b.md" ] , "part" : null } ]"#,
+            ),
+            (
+                r#"Status: superseded [{"part":"a","by":[],"kind":"note","note":"引用符\"と\\と日本語"}]"#,
+                r#"Status: superseded [{"note":"引用符\"と\\と日本語","kind":"note","by":[],"part":"a"}]"#,
+            ),
+            (
+                r#"Status: superseded [{"part":"a","by":["https://example.com/adr/0001.md"],"kind":"supplement"}]"#,
+                r#"Status: superseded [{"kind":"supplement", "by":["https://example.com/adr/0001.md"], "part":"a"}]"#,
+            ),
+        ];
+        for (left, right) in pairs {
+            assert_eq!(canonical(left), canonical(right), "{left}");
+        }
+    }
+
+    #[test]
+    fn amend_inv2_default_kind() {
+        let omitted = canonical(r#"Status: superseded [{"part":"a","by":["docs/adr/0002-b.md"]}]"#);
+        let explicit = canonical(
+            r#"Status: superseded [{"part":"a","by":["docs/adr/0002-b.md"],"kind":"replace"}]"#,
+        );
+        assert_eq!(omitted, explicit);
+        assert_eq!(
+            classify(AdrState::Present(omitted), AdrState::Present(explicit)),
+            Classification::Unchanged
+        );
+    }
+
+    #[test]
+    fn amend_inv3_parse_errors() {
+        for line in [
+            r#"Status: superseded-pending []"#,
+            r#"Status: superseded [{"part":"a","by":[],"kind":"note"}]"#,
+            r#"Status: superseded [{"part":"a","by":[]}]"#,
+            r#"Status: superseded [{"part":"a","by":["docs/adr/0002-b.md"],"kind":"note","note":"n"}]"#,
+            r#"Status: superseded [{"part":"a","by":["http://example.com/adr/0001.md"]}]"#,
+            r#"Status: superseded [{"part":"a","by":["docs/adr/0002-b.md"],"kind":"other"}]"#,
+            r#"Status: superseded [{"part":"a","by":["docs/adr/0002-b.md"],"note":""}]"#,
+            r#"Status: superseded [{"part":"a","by":["https://"]}]"#,
+        ] {
+            assert!(parse_canonical_line(line).is_err(), "{line}");
+            assert_eq!(
+                parse(line.strip_prefix("Status: ").unwrap()),
+                Status::Unknown,
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn amend_inv5_transitions() {
+        let x = vec![Change::legacy(None, vec!["docs/adr/0002-b.md".to_owned()])];
+        let y = vec![Change {
+            kind: Kind::Supplement,
+            ..x[0].clone()
+        }];
+        let present = AdrState::Present;
+        let transitions = [
+            Transition::RevisePending { changes: x.clone() },
+            Transition::UpdateRevisions {
+                old: x.clone(),
+                new: y.clone(),
+                pending: true,
+            },
+            Transition::CompleteRevised { changes: x.clone() },
+            Transition::Deprecate {
+                origin: DeprecateOrigin::SupersededPending(x.clone()),
+            },
+        ];
+        for transition in transitions {
+            let (before, after) = transition.clone().endpoints();
+            assert_eq!(classify(before, after), Classification::Direct(transition));
+        }
+        let unclassified = [
+            (
+                Status::SupersededPending(x.clone()),
+                Status::Superseded(y.clone()),
+            ),
+            (Status::SupersededPending(x.clone()), Status::Accepted),
+            (Status::Accepted, Status::SupersededPending(x.clone())),
+            (Status::Proposed, Status::SupersededPending(x.clone())),
+        ];
+        for (before, after) in unclassified {
+            assert_eq!(
+                classify(present(before.clone()), present(after.clone())),
+                Classification::Unclassified,
+                "{before:?} -> {after:?}"
+            );
+        }
+    }
 
     #[test]
     fn inv1_direct_endpoints() {
@@ -797,10 +1056,10 @@ mod tests {
     }
 
     fn change(part: Option<&str>, by: &[&str]) -> Change {
-        Change {
-            part: part.map(str::to_owned),
-            by: by.iter().map(|n| (*n).to_owned()).collect(),
-        }
+        Change::legacy(
+            part.map(str::to_owned),
+            by.iter().map(|n| (*n).to_owned()).collect(),
+        )
     }
 
     #[test]

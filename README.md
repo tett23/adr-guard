@@ -15,8 +15,8 @@ adr-guard は、この規則をgitのpre-commit hook、Claude CodeとCodexのhoo
 - 設定は不要。モノレポでモジュールごとにADRを分けても、導入の手順は変わらない。
 - 監査や計測の記録（`docs/audit/`、`docs/audits/`、`docs/benchmarks/`、`docs/benchmark/` 以下のすべてのファイル。どの深さの `docs/` でも、`docs/<モジュール>/` でもよい）も、コミット済みのものは変更・削除・移動できない（[ADR 0013](docs/adr/0013-protect-audit-and-benchmark-records.md)、[0014](docs/adr/0014-directory-name-variants.md)）。`--allow-status` と `--allow-links` は記録には効かない。記録を直す場合は、新しい記録を作成する。
 - ADRは、行頭が `ステータス:` か `Status:` のステータスの行をちょうど1つ持つ（[ADR 0012](docs/adr/0012-status-line-and-status-adt.md)）。`- Status:` や `status:` は認めない。ステータスの行が無い、または2つ以上あるADRは違反になる。
-- 新規ADRは `Status: proposed` で一度コミットする。採択して実装を待つ場合は `accepted-pending`、採択または実装完了は `accepted`、却下は `rejected`、取り下げは `discarded`、廃止は `deprecated` を使う。修正時は `Status: superseded [{"part":null,"by":["docs/adr/0002-example.md"]}]` のように部分名と修正先パスを書く。初回コミットを含め、pre-commit と check-range は状態遷移を検査する。違反は書き換えの許可オプションやトレーラーでも終了コード1になる（[ADR 0022](docs/adr/0022-status-transitions.md)）。
-- 旧形式はそのまま読み取れる。ステータス行を書き換える際は新形式を使う。移行するには対象リポジトリのルートで adr-guard のソースにある `scripts/migrate-adr-status --dry-run` を実行して差分を確認し、`scripts/migrate-adr-status --write` で適用する。引数なしは使い方の誤りになる。どちらのモードも全ADRを調べ、移行できないADRを1件ずつ表示し、最後に `移行できる: N件、移行済み: K件、移行できない: M件` を標準エラーに表示する。移行できないADRが1件でもあれば終了コード1で終わり、`--write` でも何も書き込まない（[ADR 0024](docs/adr/0024-migration-dry-run-and-error-count.md)）。
+- 新規ADRは `Status: proposed` で一度コミットする。採択して実装を待つ場合は `accepted-pending`、採択または実装完了は `accepted`、却下は `rejected`、取り下げは `discarded`、廃止は `deprecated` を使う。修正時は `Status: superseded [{"part":null,"by":["docs/adr/0002-example.md"]}]` のように部分名と修正先パスを書く。 実装を待つADRが修正を受けたときは `superseded-pending` を使う。変更には、種類 `kind`（`replace`（既定）、`supplement`（補足）、`note`（修正先のない注記））と注記 `note` を付けられる。修正先には、リポジトリのルートからのパスのほか、別のリポジトリなどの `https://` の URL を書ける。URL は存在を確かめず、たどらない（[ADR 0025](docs/adr/0025-extend-canonical-status-amendments.md)）。初回コミットを含め、pre-commit と check-range は状態遷移を検査する。違反は書き換えの許可オプションやトレーラーでも終了コード1になる（[ADR 0022](docs/adr/0022-status-transitions.md)）。
+- 旧形式はそのまま読み取れる。ステータス行を書き換える際は新形式を使う。移行するには対象リポジトリのルートで adr-guard のソースにある `scripts/migrate-adr-status --dry-run` を実行して差分を確認し、`scripts/migrate-adr-status --write` で適用する。引数なしは使い方の誤りになる。どちらのモードも全ADRを調べ、移行できないADRを1件ずつ表示し、最後に `移行できる: N件、移行済み: K件、移行できない: M件` を標準エラーに表示する。移行できないADRが1件でもあれば終了コード1で終わり、`--write` でも何も書き込まない（[ADR 0024](docs/adr/0024-migration-dry-run-and-error-count.md)）。スクリプトは `採択（未実装）→…` を `superseded-pending` に、URL のリンク先を URL の修正先に移す。補足と注記は移さないので、手で新形式に書く（[ADR 0025](docs/adr/0025-extend-canonical-status-amendments.md)）。
 - 旧形式のステータスの値は、`提案`／`Proposed`、`採択`／`Accepted`、`採択（未実装）`／`Accepted (not implemented)`（括弧は全角でも半角でもよい。[ADR 0016](docs/adr/0016-accepted-not-implemented-status.md)）、`採択→…`／`Superseded by …`、`却下`／`Rejected`、`破棄`／`Discarded`、`廃止`／`Deprecated` として解釈する。どれにも当たらない値も違反にはしない。
 - コミット済みのADRは変更できない。ただし、検査に `--allow-status` を付けるとステータスの行の変更を、`--allow-links` を付けるとリンクだけの変更を許可する。ADRの採択などでステータスを変えるため、通常は両方を付ける。
 - コミット済みのADRは、削除・リネームできない。
@@ -34,10 +34,10 @@ adr-guard は、この規則をgitのpre-commit hook、Claude CodeとCodexのhoo
 | `adr-guard claude-hook [--allow-status]` | Claude CodeのPreToolUse hookとして、Write・Edit・MultiEditによるコミット済みADRの変更を拒否する |
 | `adr-guard codex-hook [--allow-status]` | CodexのPreToolUse hookとして、`apply_patch` のパッチ（シェルから当てるものも含む）によるコミット済みADRの変更・削除・移動を拒否する |
 | `adr-guard check-range <base> <head> [--allow-status] [--allow-links]` | `<base>..<head>` のマージ以外の各コミットを、親コミットとの差分で検査する。`<base>` が無いコミットならルートコミットから検査する |
-| `adr-guard trace <パス>` | 修正先を深さ優先にたどる。既定の `--list` は4列のTSV、`--graph` は変更部分と修正先を枝線で表示する |
+| `adr-guard trace <パス>` | 修正先を深さ優先にたどる。既定の `--list` は6列のTSV（種別、元のパス、修正先、部分名、変更の種類、注記）、`--graph` は変更部分と修正先を枝線で表示する |
 | `adr-guard list [--status]` | 作業ツリーにあるADR（未コミットのものも含む）のパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する（ステータスの行が無ければステータスは空） |
 | `adr-guard proposed [--status]` | ステータスが提案（`提案…` か `Proposed`）のADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
-| `adr-guard unimplemented [--status]` | ステータスが `accepted-pending` または `採択（未実装）`（か `Accepted (not implemented)`）の、採択されたがまだ実装されていないADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
+| `adr-guard unimplemented [--status]` | ステータスが `accepted-pending`、`superseded-pending`、または `採択（未実装）`（か `Accepted (not implemented)`）の、採択されたがまだ実装されていないADRのパスを一覧する。`--status` では `<ステータス><タブ><パス>` で出力する |
 | `adr-guard links [--fix [--include-committed]]` | 作業ツリーの `.md` にある、リンクの無いADRの参照と、修飾子の付いた参照の誤りを報告する。`--fix` でリンクに置きかえ、修飾子の付いたリンクを直す（コミット済みのADRは `--include-committed` を付けたときだけ） |
 | `adr-guard check-status` | 作業ツリーのすべてのADRについて、ステータスの行がちょうど1つあるかと、新形式の修正先JSONの構文を検査する |
 | `adr-guard check-numbers` | 各ADRのディレクトリの直下で、同じ番号のADRが2つ以上ないかを検査する |

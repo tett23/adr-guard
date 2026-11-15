@@ -56,7 +56,7 @@ fn inv1_trace_order() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(output.stdout, expected.as_bytes());
-    let expected = "root\t\tdocs/adr/0001-a.md\t\nedge\tdocs/adr/0001-a.md\tdocs/adr/0002-b.md\t入力\nedge\tdocs/adr/0002-b.md\tdocs/adr/0004-d.md\t字句\nedge\tdocs/adr/0001-a.md\tdocs/adr/0003-c.md\t出力\n";
+    let expected = "root\t\tdocs/adr/0001-a.md\t\t\t\nedge\tdocs/adr/0001-a.md\tdocs/adr/0002-b.md\t入力\treplace\t\nedge\tdocs/adr/0002-b.md\tdocs/adr/0004-d.md\t字句\treplace\t\nedge\tdocs/adr/0001-a.md\tdocs/adr/0003-c.md\t出力\treplace\t\n";
     let output = trace(root, &["docs/adr/0001-a.md"]);
     assert!(
         output.status.success(),
@@ -184,7 +184,7 @@ fn inv1_list_fields_escape_parts() {
     );
     let text = String::from_utf8(output.stdout).unwrap();
     assert_eq!(text.lines().count(), 2);
-    assert!(text.lines().all(|line| line.split('\t').count() == 4));
+    assert!(text.lines().all(|line| line.split('\t').count() == 6));
     assert!(text.contains("入力\\t"), "{text:?}");
     assert!(text.contains("\\n"), "{text:?}");
 }
