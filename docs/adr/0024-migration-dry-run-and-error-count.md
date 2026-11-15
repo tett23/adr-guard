@@ -1,6 +1,6 @@
 # ADR 0024: 移行スクリプトに --dry-run を設け、失敗を最後まで数える
 
-Status: proposed
+Status: accepted-pending
 
 ## 文脈
 
